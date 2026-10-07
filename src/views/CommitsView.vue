@@ -5,7 +5,7 @@ import CommitRow from "@/components/CommitRow.vue";
 import { useCommitStore } from "@/stores/commits";
 import { useReposStore } from "@/stores/repos";
 
-/** 历史页：仓库由常驻侧栏选，这里只负责当前仓库的提交列表。 */
+/** 历史页：仓库由常驻侧栏选，这里只负责当前仓库的提交列表 + 左侧图列。 */
 const repos = useReposStore();
 const commitStore = useCommitStore();
 
@@ -41,6 +41,7 @@ watch(repoId, (id) => {
         <span v-if="commitStore.commits.length" class="muted">
           已读出 {{ commitStore.commits.length }} 条
         </span>
+        <span v-if="commitStore.graphLoading" class="muted">历史走向读取中…</span>
       </div>
 
       <n-alert v-if="commitStore.error" type="error" :title="commitStore.error.message">
@@ -48,22 +49,50 @@ watch(repoId, (id) => {
         <pre v-if="commitStore.error.detail" class="raw-output">{{ commitStore.error.detail }}</pre>
       </n-alert>
 
-      <n-empty
-        v-else-if="!commitStore.loading && commitStore.total === 0"
-        description="空仓库，尚无提交"
-      />
+      <template v-else>
+        <!--
+          图列失败不该把列表一起拖没：这条提示用独立的 v-if，不参与下面那串
+          "空仓库 / 等图 / 列表"的分支，列表照画。
+        -->
+        <n-alert
+          v-if="commitStore.graphError"
+          type="warning"
+          :title="`图列读取失败：${commitStore.graphError.message}`"
+        >
+          <div>错误码：{{ commitStore.graphError.code }}</div>
+          <pre v-if="commitStore.graphError.detail" class="raw-output">{{ commitStore.graphError.detail }}</pre>
+        </n-alert>
 
-      <n-virtual-list
-        v-else
-        :items="commitStore.commits"
-        :item-size="44"
-        key-field="id"
-        class="commit-list"
-      >
-        <template #default="{ item }">
-          <commit-row :commit="item" />
-        </template>
-      </n-virtual-list>
+        <n-empty
+          v-if="!commitStore.loading && commitStore.total === 0"
+          description="空仓库，尚无提交"
+        />
+
+        <!--
+          列宽一次定死后不再随翻页变，但第一页拿到图数据之前只能先空着。
+          这时候先占位而不是画窄列再撑宽：已经画出去的行横向跳动比等一下更糟。
+        -->
+        <div v-else-if="!commitStore.graphReady" class="graph-waiting">
+          <n-spin size="small" />
+          <span class="muted">正在读这条分支的历史走向，第一次要把父子关系整条走一遍…</span>
+        </div>
+
+        <n-virtual-list
+          v-else
+          :items="commitStore.commits"
+          :item-size="44"
+          key-field="id"
+          class="commit-list"
+        >
+          <template #default="{ item }">
+            <commit-row
+              :commit="item"
+              :row="commitStore.rowFor(item.id)"
+              :lanes="commitStore.graphLanes"
+            />
+          </template>
+        </n-virtual-list>
+      </template>
 
       <n-space align="center">
         <n-spin v-if="commitStore.loading" size="small" />
@@ -89,6 +118,17 @@ watch(repoId, (id) => {
 .muted {
   font-size: 12px;
   opacity: 0.7;
+}
+
+.graph-waiting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 120px;
+  padding: 0 16px;
+  background: #fff;
+  border-radius: 6px;
+  border: 1px solid #e5e8ee;
 }
 
 .commit-list {

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use tauri::State;
 
+use super::graph::Cache;
 use crate::error::GitError;
 use crate::git::repo::{self, RepoInfo};
 use crate::git::status::{self, WorkingFile};
@@ -68,8 +69,15 @@ pub async fn repo_rename(
 
 /// 只移除注册记录，不删磁盘文件（§6.1）。
 #[tauri::command]
-pub async fn repo_remove(state: State<'_, Arc<Db>>, id: i64) -> Result<(), GitError> {
-    query(state.inner().clone(), move |conn| repos::remove(conn, id)).await
+pub async fn repo_remove(
+    state: State<'_, Arc<Db>>,
+    graph: State<'_, Arc<Cache>>,
+    id: i64,
+) -> Result<(), GitError> {
+    query(state.inner().clone(), move |conn| repos::remove(conn, id)).await?;
+    // 注册记录没了，这份泳道分配结果就再没人会用；留着只是白占几 MB
+    graph.inner().invalidate(id);
+    Ok(())
 }
 
 /// 待提交文件。走 ensure_worktree：只读浏览仓库没有工作区，在 Rust 侧就被拒绝。

@@ -10,7 +10,8 @@ use crate::store::db::{query, Db};
 use crate::store::repos;
 
 /// 一页最多这么多条。前端要更多也只给这么多，防止一次 IPC 塞进整个历史。
-const MAX_PAGE_SIZE: usize = 500;
+/// 图那一页（commands/graph.rs）用的是同一个数：两边必须同页同宽，行才对得上。
+pub(crate) const MAX_PAGE_SIZE: usize = 500;
 
 /// 分页读提交列表。只接受注册仓库的 id，路径由 Rust 侧解析（§7.1）。
 /// browse（treeless 只读浏览）仓库允许读列表——这正是它存在的唯一理由。

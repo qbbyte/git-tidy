@@ -18,6 +18,9 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             let db = store::db::Db::open(&data_dir).map_err(|err| format!("{err:?}"))?;
             app.manage(Arc::new(db));
+            // 提交图的泳道分配结果（§6.3）。纯内存、以 HEAD 的 sha 为键，
+            // 提交/amend/reset 之后键自己就变了，丢了只是慢一次，不会画错
+            app.manage(Arc::new(commands::graph::Cache::default()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -31,6 +34,7 @@ pub fn run() {
             commands::repo::files_unstage,
             commands::commit::commit_list,
             commands::commit::commit_create,
+            commands::graph::commit_graph,
             commands::spec::spec_for,
             commands::spec::message_check,
             commands::spec::commit_scopes,

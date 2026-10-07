@@ -60,7 +60,18 @@ pub fn list(repo: &Path, skip: usize, limit: usize) -> Result<CommitPage, GitErr
     let stdout = process::run(
         Some(repo),
         &[
-            "log", "-z", &format, "--skip", &skip_arg, "-n", &limit_arg, "HEAD",
+            // --topo-order：子一定在父之前，且一条支线不被日期切散。
+            // 图列（git/graph.rs）按同一个顺序算泳道，两边顺序必须一致，
+            // 否则第 N 行的连线会接到隔壁那行身上。
+            "log",
+            "-z",
+            "--topo-order",
+            &format,
+            "--skip",
+            &skip_arg,
+            "-n",
+            &limit_arg,
+            "HEAD",
         ],
     )?
     .expect_success()?;
@@ -232,6 +243,32 @@ mod tests {
             page.commits[1..].iter().all(|c| !c.merge),
             "普通提交不该被误标为 merge"
         );
+    }
+
+    /// 列表顺序和图顺序必须是同一次遍历的结果：两边各排各的，泳道就会接到隔壁行上
+    #[test]
+    fn list_order_matches_the_graph_walk() {
+        let dir = repo();
+        commit(dir.path(), "a.txt", "feat: 基线");
+        git_in(dir.path(), &["checkout", "-q", "-b", "side"]);
+        commit(dir.path(), "b.txt", "feat: 支线一");
+        commit(dir.path(), "c.txt", "feat: 支线二");
+        git_in(dir.path(), &["checkout", "-q", "-"]);
+        commit(dir.path(), "d.txt", "feat: 主干");
+        git_in(
+            dir.path(),
+            &["merge", "--no-ff", "-q", "-m", "chore: 合并支线", "side"],
+        );
+
+        let page = list(dir.path(), 0, 10).expect("list ok");
+        let listed: Vec<&str> = page.commits.iter().map(|c| c.id.as_str()).collect();
+        let walked: Vec<String> = crate::git::graph::history(dir.path())
+            .expect("读父子")
+            .into_iter()
+            .map(|(sha, _)| sha)
+            .collect();
+
+        assert_eq!(listed, walked, "分页列表和图走的不是同一个顺序");
     }
 
     #[test]
