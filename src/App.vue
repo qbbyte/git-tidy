@@ -157,6 +157,13 @@ body,
   height: 100%;
   margin: 0;
 }
+
+/* 桌面外壳不该有整页滚动条：滚动只属于各个面板自己（.content 和左栏都各自 overflow）。
+   关掉它，任何一个页面板写错高度都只会缩掉自己那一块，不会把整窗拖走。 */
+html,
+body {
+  overflow: hidden;
+}
 </style>
 
 <style scoped>

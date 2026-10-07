@@ -248,7 +248,9 @@ onMounted(() => {
   flex-direction: column;
   gap: 18px;
   padding: 14px;
-  height: 100%;
+  /* 不写 height:100%：项目没有 box-sizing 重置，100% 是内容高，再加上上下各 14px 内边距
+     就变成 100vh + 28px，把文档撑出窗口，右侧因此多出一条整页滚动条。
+     .shell 是 flex 行容器，交叉轴默认 stretch 已经把高度正好给到 100vh（含内边距） */
   overflow: auto;
   border-right: 1px solid #e5e8ee;
   background: #fbfcfe;

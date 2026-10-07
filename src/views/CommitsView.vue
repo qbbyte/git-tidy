@@ -11,8 +11,21 @@ const commitStore = useCommitStore();
 
 const repoId = computed(() => repos.currentId);
 
+/** 已经画出来的行。翻页失败时用它决定"整页报错"还是"列表照留、只在底部报错" */
+const hasRows = computed(() => commitStore.commits.length > 0);
+
+/** 离底还有这么多像素就去取下一页：约 13 行，够把一次请求的等待盖掉 */
+const LOAD_AHEAD_PX = 600;
+
 function loadMore() {
   if (repoId.value !== null) commitStore.loadMore(repoId.value);
+}
+
+/** 滚动事件由虚拟列表自己的滚动容器发出，target 就是那个容器 */
+function onScroll(event: Event) {
+  const el = event.target as HTMLElement;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight > LOAD_AHEAD_PX) return;
+  loadMore();
 }
 
 onMounted(async () => {
@@ -28,7 +41,7 @@ watch(repoId, (id) => {
 </script>
 
 <template>
-  <n-space vertical size="medium">
+  <div class="page">
     <n-empty
       v-if="repoId === null"
       description="在左侧添加或打开一个仓库"
@@ -44,7 +57,11 @@ watch(repoId, (id) => {
         <span v-if="commitStore.graphLoading" class="muted">历史走向读取中…</span>
       </div>
 
-      <n-alert v-if="commitStore.error" type="error" :title="commitStore.error.message">
+      <n-alert
+        v-if="commitStore.error && !hasRows"
+        type="error"
+        :title="commitStore.error.message"
+      >
         <div>错误码：{{ commitStore.error.code }}</div>
         <pre v-if="commitStore.error.detail" class="raw-output">{{ commitStore.error.detail }}</pre>
       </n-alert>
@@ -83,6 +100,7 @@ watch(repoId, (id) => {
           :item-size="44"
           key-field="id"
           class="commit-list"
+          @scroll="onScroll"
         >
           <template #default="{ item }">
             <commit-row
@@ -95,21 +113,26 @@ watch(repoId, (id) => {
       </template>
 
       <n-space align="center">
-        <n-spin v-if="commitStore.loading" size="small" />
-        <n-button
-          v-else-if="!commitStore.loadedAll && commitStore.total > 0"
-          size="small"
-          @click="loadMore"
-        >
-          加载更多（已加载 {{ commitStore.commits.length }} / {{ commitStore.total }}）
-        </n-button>
-        <span v-else-if="commitStore.total > 0" class="muted">已全部加载</span>
+        <template v-if="commitStore.error && hasRows">
+          <span class="muted">读取下一页失败：{{ commitStore.error.message }}</span>
+          <n-button size="tiny" @click="loadMore">重试</n-button>
+        </template>
+        <n-spin v-else-if="commitStore.loading" size="small" />
+        <span v-else-if="hasRows && commitStore.loadedAll" class="muted">已全部加载</span>
       </n-space>
     </template>
-  </n-space>
+  </div>
 </template>
 
 <style scoped>
+.page {
+  /* 外壳的 .content 已经把剩余高度给过来了，这里按列分给它，不再拿 100vh 去猜 */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+}
+
 .count-line {
   display: flex;
   gap: 12px;
@@ -132,8 +155,10 @@ watch(repoId, (id) => {
 }
 
 .commit-list {
-  /* 外壳把标题栏和页签的高度拿走了，这里按剩余高度铺满 */
-  height: calc(100vh - 190px);
+  /* 吃掉本页剩下的全部高度。以前写 calc(100vh - 190px)，那个 190 是手调的，
+     上方行数一变（计数行、中断提示条、底部状态行）就差出几十像素的空白 */
+  flex: 1;
+  min-height: 0;
   background: #fff;
   border-radius: 6px;
   border: 1px solid #e5e8ee;
