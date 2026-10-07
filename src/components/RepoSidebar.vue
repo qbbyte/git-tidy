@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { NButton, NEmpty, NInput, NSpace, NTag } from "naive-ui";
 import { useReposStore } from "@/stores/repos";
-import { INTERRUPT_LABEL } from "@/api/refs";
+import { INTERRUPT_LABEL, type Ref } from "@/api/refs";
 import type { Repo } from "@/api/repo";
 
 /**
@@ -56,6 +56,27 @@ const trackStale = computed(() => {
 const interruptText = computed(() =>
   repos.interrupted ? INTERRUPT_LABEL[repos.interrupt] : "正常",
 );
+
+/**
+ * 本仓库的全部引用。这里只读不写：切换分支会动 HEAD 和工作区，按第五节第 17 条
+ * 要等 `write_guard` 的还原点先落地（§7.10 的写半边），所以列表上不给点击入口。
+ */
+const localBranches = computed(() => repos.refs.filter((item) => item.kind === "branch"));
+const remoteBranches = computed(() => repos.refs.filter((item) => item.kind === "remote"));
+const tagRefs = computed(() => repos.refs.filter((item) => item.kind === "tag"));
+
+const currentBranch = computed(() => repos.repoState?.branch ?? repos.info?.branch ?? null);
+
+/** 远程分支和标签默认收起：一个仓库几百个远程跟踪分支是常态，侧栏不该被它们挤没 */
+const showRemote = ref(false);
+const showTags = ref(false);
+
+/** 与上方"跟踪"那一行同一套说法：git 没给数字时是"已同步"，不是 0/0 */
+function trackOf(item: Ref) {
+  if (item.upstreamGone) return "远程已删";
+  if (item.ahead === null && item.behind === null) return item.upstream ? "已同步" : "";
+  return `↑${item.ahead ?? 0} ↓${item.behind ?? 0}`;
+}
 
 async function addPath() {
   const trimmed = path.value.trim();
@@ -239,6 +260,48 @@ onMounted(() => {
         克隆到本地
       </n-button>
     </div>
+
+    <!--
+      全部引用读自 §7.3 那一次 for-each-ref，不另起进程。只列不切：
+      切换分支要动 HEAD 和工作区，等批 6 的还原点（write_guard）落地后按 §7.10 给。
+    -->
+    <div v-if="localBranches.length || remoteBranches.length || tagRefs.length" class="block">
+      <div class="block-title">分支 {{ localBranches.length }}</div>
+      <div class="ref-list">
+        <div
+          v-for="item in localBranches"
+          :key="item.fullName"
+          class="ref-row"
+          :class="{ current: item.name === currentBranch }"
+        >
+          <span class="ref-dot" :class="{ on: item.name === currentBranch }"></span>
+          <span class="ref-name" :title="item.fullName">{{ item.name }}</span>
+          <span class="ref-track" :class="{ warn: item.upstreamGone }">{{ trackOf(item) }}</span>
+        </div>
+      </div>
+
+      <template v-if="remoteBranches.length">
+        <n-button size="tiny" quaternary @click="showRemote = !showRemote">
+          远程分支 {{ remoteBranches.length }} {{ showRemote ? "▾" : "▸" }}
+        </n-button>
+        <div v-if="showRemote" class="ref-list">
+          <div v-for="item in remoteBranches" :key="item.fullName" class="ref-row">
+            <span class="ref-name" :title="item.fullName">{{ item.name }}</span>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="tagRefs.length">
+        <n-button size="tiny" quaternary @click="showTags = !showTags">
+          标签 {{ tagRefs.length }} {{ showTags ? "▾" : "▸" }}
+        </n-button>
+        <div v-if="showTags" class="ref-list">
+          <div v-for="item in tagRefs" :key="item.fullName" class="ref-row">
+            <span class="ref-name" :title="item.fullName">{{ item.name }}</span>
+          </div>
+        </div>
+      </template>
+    </div>
   </aside>
 </template>
 
@@ -342,6 +405,53 @@ onMounted(() => {
   display: inline-block;
   width: 56px;
   opacity: 0.65;
+}
+
+.ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* 分支几百条的仓库是常态：列表自己滚，别把上面的仓库列表和状态摘要顶出侧栏 */
+  flex: none;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.ref-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 1px 2px;
+}
+
+.ref-row.current .ref-name {
+  font-weight: 600;
+}
+
+.ref-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.ref-dot.on {
+  background: #1f5aa8;
+}
+
+.ref-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ref-track {
+  flex: none;
+  font-size: 11px;
+  opacity: 0.7;
 }
 
 .path {
