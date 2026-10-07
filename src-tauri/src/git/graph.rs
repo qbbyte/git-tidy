@@ -102,8 +102,11 @@ fn parse(raw: &str) -> Result<Vec<(String, Vec<String>)>, GitError> {
 /// 开了就会出现同一个 commit 占两列，而跳过不画的话子提交看着就像根提交。
 ///
 /// 颜色按**分支**分，不按合并点分：主线（从 HEAD 沿第一父走下来那条链）一支颜色走到底，
-/// 每分出一条支线另开一支、避开同时在用的那几支。要是让支线继承合并点的颜色，
-/// 一个"主线 + 一堆已合并支线"的仓库里整列就全是一个颜色，分支走向等于没画。
+/// 每分出一条支线**另起一支新色号、永不回收**（照 Fork）。要是让支线继承合并点的颜色，
+/// 一个"主线 + 一堆已合并支线"的仓库里整列就全是一个颜色，分支走向等于没画；
+/// 而"避开同时在用的那几支、空出来就复用"会让两条前后脚合进来的支线拿到同一个号，
+/// 隔几行看着就像同一条分支。色号只在这一次全历史遍历里发，所以同一条支线翻页、
+/// 换筛选都不改色；号涨过调色板长度才由前端取模循环（`CommitRow.vue` 的 `strokeColor`）。
 /// 每段线的颜色取它**落进的那一列**，线接到下面那个圆点时接口处就不换色——换了色等于
 /// 把一根线画成两段，看着和没画上一样。
 pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
@@ -111,14 +114,16 @@ pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
     let mut colors: Vec<usize> = Vec::new();
     let mut rows = Vec::with_capacity(entries.len());
     let main_chain = main_line(entries);
+    // 0 号是主线那支，之后每开一条支线取一个号，用过的不再发
+    let mut next_color = 0usize;
 
     for (sha, parents) in entries {
         let (lane, incoming) = match lane_awaiting(&lanes, sha) {
             Some(index) => (index, true),
             None => {
-                // 没人在等它：要么是整个图的起点（HEAD），要么是一段独立历史。另开一支颜色。
+                // 没人在等它：要么是整个图的起点（HEAD），要么是一段独立历史。另起一支色号。
                 let index = open_lane(&mut lanes, &mut colors);
-                colors[index] = pick_color(&lanes, &colors, None);
+                colors[index] = take_color(&mut next_color);
                 (index, false)
             }
         };
@@ -163,9 +168,9 @@ pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
             // 线的颜色跟着它落进的那一列走：第一父继承本列时那列就是本行的颜色，父提交已经排在
             // 别的列时要用那一列的颜色——这一段线下面接的就是那列的圆点，接口处换色看着就像断线。
             // 主线汇入别的列时先把那列刷成主线的颜色，这样主线那支才够连贯；
-            // 支线另开的新列用挑出来的新色，汇入已有列时不动那列原来的颜色。
+            // 支线另开的新列发一个新色号，汇入已有列时不动那列原来的颜色。
             if index > 0 && !queued {
-                colors[target] = pick_color(&lanes, &colors, Some(lane));
+                colors[target] = take_color(&mut next_color);
             } else if index == 0 && on_main_line {
                 colors[target] = color;
             }
@@ -257,25 +262,15 @@ fn main_line(entries: &[(String, Vec<String>)]) -> HashSet<&str> {
     chain
 }
 
-/// 给一条新泳道挑一支没人用的颜色：只避开**还在用**的那几支，已经空掉的泳道那支可以回收
-/// （不然泳道数不涨、颜色却会一路涨到把调色板用完）。
+/// 发一个新色号，**用过的永不回收**：一条支线在整条历史里只有一个号，两条支线不会前后撞色。
 ///
-/// `taken` 传本行圆点自己那支：它在这一行还在画，被新支线抢走就等于分叉看不出分叉。
-fn pick_color(lanes: &[Option<String>], colors: &[usize], taken: Option<usize>) -> usize {
-    let mut used: Vec<usize> = lanes
-        .iter()
-        .zip(colors)
-        .filter(|(waiting, _)| waiting.is_some())
-        .map(|(_, used)| *used)
-        .collect();
-    if let Some(index) = taken {
-        used.push(colors[index]);
-    }
-    let mut candidate = 0usize;
-    while used.contains(&candidate) {
-        candidate += 1;
-    }
-    candidate
+/// 代价是号会一路涨过调色板长度，到点由前端取模循环（`CommitRow.vue` 的 `strokeColor`）。
+/// 泳道下标仍然回收（`open_lane` 找空位），所以图列宽度不随历史长度涨——这两件事互不影响：
+/// 列是"这一行有几个分支同时在画"，色是"这条分支是谁"。
+fn take_color(next: &mut usize) -> usize {
+    let color = *next;
+    *next += 1;
+    color
 }
 
 /// 哪一列在等这个提交。等它的那一列就是它自己要画的那一列，
@@ -460,6 +455,10 @@ mod tests {
         assert_eq!(lanes_of(&rows[1]), vec![(0, 0), (1, 0)]);
         assert_eq!(rows[1].color, 1, "汇进主线的那条支线，圆点还是自己那支颜色");
         assert_eq!(rows[4].lane, 1, "新支线的前一个提交也在第二列");
+        assert_ne!(
+            rows[4].color, rows[1].color,
+            "列可以复用，色号不行：第二条支线拿到的是新号，不然两条支线隔几行看着像同一条"
+        );
         assert_eq!(width(&rows), 2, "总共两条泳道就够了");
         assert_dots_are_reached_from_above(&rows);
         assert_every_parent_is_drawn_from_its_child(&rows, &walk);
@@ -494,6 +493,12 @@ mod tests {
         for sha in ["s3", "s2", "s1"] {
             assert_ne!(color_of(sha), 0, "{sha} 是支线，不能和主线同色");
         }
+        // 三条支线先后合进同一条主线，泳道只用两列，色号却一路往前发、不回收
+        assert_eq!(
+            vec![color_of("s3"), color_of("s2"), color_of("s1")],
+            vec![1, 2, 3],
+            "色号按分支永久分配"
+        );
         assert_dots_are_reached_from_above(&rows);
         assert_every_parent_is_drawn_from_its_child(&rows, &walk);
         assert_colors_follow_branches(&rows, &walk);

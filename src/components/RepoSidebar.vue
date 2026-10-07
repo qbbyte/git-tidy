@@ -454,6 +454,11 @@ onMounted(() => {
   opacity: 0.7;
 }
 
+/* .warn 下面那行是给全组件用的，这里要压掉自身的 opacity，否则警告色被冲淡到看不出来 */
+.ref-track.warn {
+  opacity: 1;
+}
+
 .path {
   font-size: 11px;
   opacity: 0.8;

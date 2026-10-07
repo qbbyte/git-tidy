@@ -1,5 +1,7 @@
 pub mod clone;
 pub mod commit;
+pub mod detail;
+pub mod diff;
 pub mod graph;
 pub mod log;
 pub mod message;

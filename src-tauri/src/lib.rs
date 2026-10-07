@@ -34,6 +34,8 @@ pub fn run() {
             commands::repo::files_unstage,
             commands::commit::commit_list,
             commands::commit::commit_create,
+            commands::detail::commit_detail,
+            commands::diff::commit_file_diff,
             commands::graph::commit_graph,
             commands::refs::refs_scan,
             commands::spec::spec_for,

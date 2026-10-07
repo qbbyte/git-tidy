@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::Path;
@@ -124,7 +124,64 @@ pub fn run_streaming(
     })
 }
 
-/// 统一装配命令。返回 Command 而不是直接执行，让上面三个入口共用同一套环境固定项。
+/// stdout 原样按字节返回，**读取二进制内容必须走这里**。
+/// `run` 走的是 `String::from_utf8_lossy`，非 UTF-8 字节会被替换成 U+FFFD，图片过了那道
+/// 转换就再也拼不回原样；`cat-file --batch-check` 之类的纯文本调用也共用这条出口，
+/// 少一个分支就少一处会写错的地方。
+///
+/// `stdin` 非空时按需写入后立刻关闭管道（`--batch-check` 就是靠读到 EOF 才收工）。
+/// 写在前、读在后，所以喂进去的量要小：本项目只喂"这一条提交里的对象号"，几十行，
+/// 撑不满管道，不会和子进程的输出互相堵死。
+pub fn run_bytes(
+    repo: Option<&Path>,
+    args: &[&str],
+    stdin: &[u8],
+) -> Result<ByteOutput, GitError> {
+    let mut cmd = build(repo, args, &[])?;
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    {
+        let mut handle = child
+            .stdin
+            .take()
+            .expect("stdin 已被声明为 piped，take 一定有值");
+        handle.write_all(stdin)?;
+    }
+    let output = child.wait_with_output()?;
+    Ok(ByteOutput {
+        stdout: output.stdout,
+        stderr: lossy(&output.stderr),
+        success: output.status.success(),
+    })
+}
+
+pub struct ByteOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: String,
+    pub success: bool,
+}
+
+impl ByteOutput {
+    /// 成功时返回 stdout 的原始字节。
+    pub fn expect_success(self) -> Result<Vec<u8>, GitError> {
+        if self.success {
+            Ok(self.stdout)
+        } else {
+            Err(GitError::GitFailed {
+                stderr: self.stderr,
+            })
+        }
+    }
+}
+
+/// 拼出来的参数（`Vec<String>`）过不进上面那几个入口：它们收 `&[&str]`，
+/// 而 `&Vec<String>` 和它是两种类型，没有隐式转换。
+/// 集中在这里转一次，调用点就不用各自 `iter().map` 一遍、也少一处会写错的地方。
+pub fn strs(args: &[String]) -> Vec<&str> {
+    args.iter().map(String::as_str).collect()
+}
+
+/// 统一装配命令。返回 Command 而不是直接执行，让上面几个入口共用同一套环境固定项。
 fn build(
     repo: Option<&Path>,
     args: &[&str],

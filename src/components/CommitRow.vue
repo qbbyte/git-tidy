@@ -25,25 +25,46 @@ const props = defineProps<{
   row?: GraphRow;
   /** 整页统一列数：按行自定宽度会让不同行的同一条泳道落在不同像素上 */
   lanes?: number;
+  /** 右边那栏正在显示它 */
+  selected?: boolean;
 }>();
+
+const emit = defineEmits<{ click: [] }>();
 
 const ROW_HEIGHT = 44;
 const LANE_WIDTH = 14;
 
 /**
- * 调色板。下标由 Rust 侧按分支分配：0 永远是主线（HEAD 沿第一父那条链），每条支线另开一支、
- * 避开同时在用的那几支，所以这里第一支要挑"看着就是主干"的颜色，后面的依次区分度高的排。
- * 长度只要不小于同时存在的分支数就够用（超了会取模复用）。
+ * 调色板。下标由 Rust 侧**按分支永久发号**（`graph.rs` 的 `take_color`）：0 永远是主线
+ * （HEAD 沿第一父那条链），每开一条支线发一个新号，用过的不回收，所以同一个号在这张图上
+ * 自始至终是同一条分支。
+ *
+ * 色相按 16 等分取点（相邻两个色相 22.5°），但**槽位顺序不是色相顺序**，而是色相步长的
+ * 位反序（0,8,4,12,2,10,6,14,1,…）：这样前 8 个槽位互相隔开 45°，第 9 支起才插进它们中间
+ * 的 22.5° 空位。同时先后两半各用一档明度（前 8 支深、后 8 支浅），挨得最近的那批
+ * 靠明度差兜住。历史上这里是 8 色，第 9 条支线就绕回主线那支蓝，看着像同一条分支。
+ *
+ * 只有 `strokeColor` 一处消费。**取模的边界要说清**：号是按分支发的，一次全历史遍历能发几百号，
+ * 所以撞色是常态而不是意外——撞上的两条分支要同时出现在屏幕上才刺眼，而屏幕上同时可见的泳道数
+ * 由列宽封顶，远小于 16。真要无限区分只能靠徽标和筛选，不靠颜色。
  */
 const PALETTE = [
-  "#6fb3d1",
-  "#d699b6",
-  "#a5c965",
-  "#dfaf7a",
-  "#bd96d3",
-  "#7fbbb3",
-  "#e0797f",
-  "#9aa5b8",
+  "hsl(198, 55%, 58%)", // 主线：原 #6fb3d1 那支蓝，深一档让 2px 线在白底上站得住
+  "hsl(18, 55%, 58%)",
+  "hsl(288, 55%, 58%)",
+  "hsl(108, 55%, 58%)",
+  "hsl(243, 55%, 58%)",
+  "hsl(63, 55%, 58%)",
+  "hsl(333, 55%, 58%)",
+  "hsl(153, 55%, 58%)",
+  "hsl(220, 70%, 72%)",
+  "hsl(40, 70%, 72%)",
+  "hsl(310, 70%, 72%)",
+  "hsl(130, 70%, 72%)",
+  "hsl(266, 70%, 72%)",
+  "hsl(85, 70%, 72%)",
+  "hsl(355, 70%, 72%)",
+  "hsl(175, 70%, 72%)",
 ];
 
 function colorOf() {
@@ -127,7 +148,11 @@ function stubOf() {
 </script>
 
 <template>
-  <div class="commit-row">
+  <div
+    class="commit-row"
+    :class="{ selected }"
+    @click="emit('click')"
+  >
     <svg class="graph" :width="graphWidth()" :height="ROW_HEIGHT" aria-hidden="true">
       <template v-if="row">
         <path
@@ -194,6 +219,17 @@ function stubOf() {
   padding: 0 12px;
   border-bottom: 1px solid #f0f2f5;
   font-size: 13px;
+  cursor: pointer;
+}
+
+/* 选中态是"右边那一栏正在显示它"，不是焦点态：颜色要够淡，一屏几十行同时亮着不能刺眼 */
+.commit-row:hover {
+  background: #f2f6fb;
+}
+
+.commit-row.selected {
+  background: #e6effa;
+  box-shadow: inset 2px 0 0 #1f5aa8;
 }
 
 .graph {
