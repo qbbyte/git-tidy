@@ -126,7 +126,10 @@ pub fn evaluate(spec: &Spec, subject: &str, body: &str) -> Outcome {
                 ),
             );
         }
-        if summary.commit_type.is_none() && subject.contains(':') && !fullwidth {
+        // 解析不出 type 有两种原因，各报各的：冒号左边写坏了才算"头部无法解析"，
+        // 右边空着是"标题为空"（message.rs 里空描述本来就不算规范头部，见 empty_description_is_not_conventional）
+        let unparsable_header = subject.contains(':') && !fullwidth && !desc.is_empty();
+        if summary.commit_type.is_none() && unparsable_header {
             push(
                 &mut violations,
                 Reason::MalformedHeader,

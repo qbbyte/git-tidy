@@ -255,7 +255,7 @@ pub fn interrupt(repo: &Path) -> Result<InterruptInfo, GitError> {
     // MARKERS 的顺序即优先级：第一个存在的标记就是答案，后面的不再看
     let hit = MARKERS.iter().zip(&paths).find_map(|((kind, _), path)| {
         let full = resolve(repo, path);
-        is_present(&full).then(|| (*kind, full))
+        is_present(&full).then_some((*kind, full))
     });
 
     let Some((kind, dir)) = hit else {

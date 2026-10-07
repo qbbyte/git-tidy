@@ -122,7 +122,7 @@ fn with_rename_source(repo: &Path, paths: &[String]) -> Vec<String> {
         let Some(from) = file.from_path else {
             continue;
         };
-        if paths.iter().any(|path| *path == file.path) && !targets.iter().any(|t| *t == from) {
+        if paths.contains(&file.path) && !targets.contains(&from) {
             targets.push(from);
         }
     }
