@@ -1,0 +1,12 @@
+=== clone 输出 ===
+Cloning into 'D:/mine-project/git-tidy/src-tauri/target/live'...
+fatal: unable to access 'https://github.com/qbbyte/git-tidy.git/': Failed to connect to github.com port 443 via 127.0.0.1 after 2104 ms: Could not connect to server
+=== promisor 配置 ===
+fatal: cannot change to 'live': No such file or directory
+PF=128
+fatal: cannot change to 'live': No such file or directory
+PROM=128
+=== 工作区条目 ===
+ls: cannot access 'live': No such file or directory
+=== 体积 ===
+du: cannot access 'live': No such file or directory

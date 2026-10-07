@@ -1,11 +1,18 @@
 import { createRouter, createWebHashHistory } from "vue-router";
-import RepoView from "@/views/RepoView.vue";
+import CommitsView from "@/views/CommitsView.vue";
+import CommitView from "@/views/CommitView.vue";
 
 /**
  * 用 hash 模式：Tauri 生产包走自定义协议加载本地文件，history 模式下深链刷新会命中
  * 不存在的资源路径。桌面端没有地址栏，用 hash 不损失任何体验。
+ *
+ * 仓库列表在常驻侧栏里，不再单独占一个路由——主区只保留 Fork 那两个页签。
  */
 export const router = createRouter({
   history: createWebHashHistory(),
-  routes: [{ path: "/", name: "repo", component: RepoView }],
+  routes: [
+    { path: "/", redirect: { name: "history" } },
+    { path: "/history", name: "history", component: CommitsView },
+    { path: "/commit", name: "commit", component: CommitView },
+  ],
 });

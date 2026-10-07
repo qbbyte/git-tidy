@@ -1,0 +1,321 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from "vue";
+import { open } from "@tauri-apps/plugin-dialog";
+import { NButton, NEmpty, NInput, NSpace, NTag } from "naive-ui";
+import { useReposStore } from "@/stores/repos";
+import type { Repo } from "@/api/repo";
+
+/**
+ * 常驻左栏：仓库注册表 + 当前仓库的只读信息（照 Fork 的侧栏职责）。
+ * 主区的历史页和提交页都靠这里切仓库，所以它不随页签卸载。
+ */
+const repos = useReposStore();
+
+const path = ref("");
+const url = ref("");
+const showUrl = ref(false);
+const editing = ref<{ id: number; name: string } | null>(null);
+
+/** 克隆/补齐是长任务，期间所有写入口都要关掉，否则第二次点击会并发抢同一个目录 */
+const busy = computed(() => repos.loading || repos.progress !== null);
+
+async function addPath() {
+  const trimmed = path.value.trim();
+  if (!trimmed) return;
+  await repos.add(trimmed);
+  // 失败时把路径留在框里，用户不必重新粘贴
+  if (!repos.error) path.value = "";
+}
+
+async function addUrl() {
+  const trimmed = url.value.trim();
+  if (!trimmed) return;
+  await repos.addByUrl(trimmed);
+  if (!repos.error) {
+    url.value = "";
+    showUrl.value = false;
+  }
+}
+
+// as const 是必须的：options 的字段类型被推宽成 boolean 时，
+// open() 的条件返回类型会退化成 string[] | null
+async function pickDirectory() {
+  const picked = await open(
+    { title: "选择 Git 仓库目录", directory: true, multiple: false } as const,
+  );
+  if (!picked) return;
+  path.value = picked;
+  await addPath();
+}
+
+function startRename(repo: Repo) {
+  editing.value = { id: repo.id, name: repo.name };
+}
+
+function saveRename() {
+  if (!editing.value) return;
+  const { id, name } = editing.value;
+  editing.value = null;
+  repos.rename(id, name);
+}
+
+/** 移除只删注册记录，磁盘上的仓库不动（§6.1），所以不给确认弹窗 */
+function removeRepo(repo: Repo) {
+  if (editing.value?.id === repo.id) editing.value = null;
+  repos.remove(repo.id);
+}
+
+function kindTag(repo: Repo) {
+  return repo.kind === "worktree"
+    ? { text: "本地", type: "success" as const }
+    : { text: "只读", type: "info" as const };
+}
+
+onMounted(() => {
+  if (repos.repos.length === 0) repos.load();
+});
+</script>
+
+<template>
+  <aside class="side">
+    <div class="brand">
+      <span class="brand-title">Git Tidy</span>
+      <span class="brand-sub">本地 Git 提交治理</span>
+    </div>
+
+    <div class="block">
+      <div class="block-title">仓库</div>
+      <div class="repo-list">
+        <div
+          v-for="repo in repos.repos"
+          :key="repo.id"
+          class="repo-row"
+          :class="{ active: repo.id === repos.currentId }"
+          @click="repos.select(repo.id)"
+        >
+          <div class="row-main">
+            <span class="repo-name" :title="repo.path">{{ repo.name }}</span>
+            <n-tag v-if="repo.id !== (editing?.id ?? -1)" :type="kindTag(repo).type" size="tiny">
+              {{ kindTag(repo).text }}
+            </n-tag>
+          </div>
+          <div class="row-actions">
+            <template v-if="editing && editing.id === repo.id">
+              <n-input
+                v-model:value="editing.name"
+                size="tiny"
+                placeholder="留空回落到目录名"
+                @keyup.enter="saveRename"
+                @click.stop
+              />
+              <n-button size="tiny" type="primary" @click.stop="saveRename">存</n-button>
+              <n-button size="tiny" quaternary @click.stop="editing = null">取消</n-button>
+            </template>
+            <template v-else>
+              <n-button
+                v-if="repo.kind === 'browse'"
+                size="tiny"
+                secondary
+                type="primary"
+                :disabled="busy"
+                @click.stop="repos.materialize(repo.id)"
+              >
+                克隆
+              </n-button>
+              <n-button size="tiny" quaternary @click.stop="startRename(repo)">重命名</n-button>
+              <n-button size="tiny" quaternary type="error" @click.stop="removeRepo(repo)">
+                移除
+              </n-button>
+            </template>
+          </div>
+        </div>
+        <n-empty v-if="!repos.repos.length" size="small" description="还没有仓库" />
+      </div>
+
+      <n-space vertical size="small">
+        <n-input
+          v-model:value="path"
+          size="small"
+          placeholder="本地仓库目录 D:\project\demo"
+          @keyup.enter="addPath"
+        />
+        <n-space size="small">
+          <n-button
+            size="small"
+            type="primary"
+            :loading="busy"
+            :disabled="!path.trim()"
+            @click="addPath"
+          >
+            添加目录
+          </n-button>
+          <n-button size="small" :disabled="busy" @click="pickDirectory">浏览…</n-button>
+          <n-button size="small" quaternary @click="showUrl = !showUrl">按地址</n-button>
+        </n-space>
+        <template v-if="showUrl">
+          <n-input
+            v-model:value="url"
+            size="small"
+            placeholder="https://… 或 git@host:org/repo.git"
+            @keyup.enter="addUrl"
+          />
+          <n-button size="small" :loading="busy" :disabled="!url.trim()" @click="addUrl">
+            只读浏览这个地址
+          </n-button>
+          <div class="hint">
+            地址方式只下载提交对象，不建工作区：能读提交列表，不能暂存、不能提交。想要完整能力就添加之后点「克隆」。
+          </div>
+        </template>
+      </n-space>
+    </div>
+
+    <div v-if="repos.info" class="block">
+      <div class="block-title">{{ repos.current?.name }}</div>
+      <div class="meta">
+        <div><span class="key">分支</span>{{ repos.info.branch ?? "游离 HEAD" }}</div>
+        <div v-if="repos.info.headCommit">
+          <span class="key">HEAD</span>
+          <code>{{ repos.info.headCommit.slice(0, 8) }}</code>
+        </div>
+        <div v-else><span class="key">HEAD</span>空仓库</div>
+        <div><span class="key">待提交</span>{{ repos.workingFiles.length }} 项</div>
+        <div class="path" :title="repos.info.workTree">{{ repos.info.workTree }}</div>
+        <div class="path muted" :title="repos.info.gitDir">{{ repos.info.gitDir }}</div>
+        <div class="muted">git {{ repos.info.gitVersion }}</div>
+      </div>
+      <n-button
+        v-if="repos.current?.kind === 'browse'"
+        size="small"
+        type="primary"
+        secondary
+        class="clone-button"
+        :loading="busy"
+        @click="repos.materialize(repos.current.id)"
+      >
+        克隆到本地
+      </n-button>
+    </div>
+  </aside>
+</template>
+
+<style scoped>
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 14px;
+  height: 100%;
+  overflow: auto;
+  border-right: 1px solid #e5e8ee;
+  background: #fbfcfe;
+  font-size: 12px;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.brand-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f5aa8;
+}
+
+.brand-sub {
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+.block-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a94a6;
+}
+
+.repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.repo-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.repo-row:hover {
+  background: #eef2f8;
+}
+
+.repo-row.active {
+  background: #e3ecf7;
+}
+
+.row-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.repo-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.key {
+  display: inline-block;
+  width: 56px;
+  opacity: 0.65;
+}
+
+.path {
+  font-size: 11px;
+  opacity: 0.8;
+  word-break: break-all;
+}
+
+.clone-button {
+  margin-top: 4px;
+}
+
+.hint {
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.7;
+}
+
+.muted {
+  font-size: 11px;
+  opacity: 0.7;
+}
+</style>

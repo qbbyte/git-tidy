@@ -1,12 +1,42 @@
+use std::sync::Arc;
+
+use tauri::Manager;
+
 mod commands;
+mod config;
 mod error;
 mod git;
+mod store;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![commands::repo::repo_probe])
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // 索引库落在 app data dir（§6.7）。开库失败就是启动失败，不做"没有库也能跑"的降级
+            let data_dir = app.path().app_data_dir()?;
+            let db = store::db::Db::open(&data_dir).map_err(|err| format!("{err:?}"))?;
+            app.manage(Arc::new(db));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::repo::repo_add,
+            commands::repo::repo_list,
+            commands::repo::repo_refresh,
+            commands::repo::repo_rename,
+            commands::repo::repo_remove,
+            commands::repo::worktree_status,
+            commands::repo::files_stage,
+            commands::repo::files_unstage,
+            commands::commit::commit_list,
+            commands::commit::commit_create,
+            commands::spec::spec_for,
+            commands::spec::message_check,
+            commands::spec::commit_scopes,
+            commands::remote::repo_add_remote,
+            commands::remote::repo_materialize
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
