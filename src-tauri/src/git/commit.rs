@@ -3,6 +3,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use super::log::{self, Commit};
+use super::refs::{self, Interrupt};
 use super::{process, status};
 use crate::config::check::{self, evaluate, Outcome};
 use crate::config::spec::Spec;
@@ -46,6 +47,14 @@ impl Draft {
 /// 用表单内容提交。规范判定在这里兜底（§7.5）：前端的禁用挡不住绕过界面的调用，
 /// 而这条路径是唯一能写历史的入口之一，必须在 Rust 侧再判一次。
 pub fn create(repo: &Path, spec: &Spec, draft: &Draft) -> Result<Commit, GitError> {
+    // §7.3：中断态里 git commit 的语义是"给这次合并/摘取收尾"，产物是一个带两个父的
+    // 合并提交，和用户在表单上点的东西不是一回事。界面已经把提交按钮禁掉，
+    // 这里再挡一次——绕开界面直接调用也进不来。
+    let info = refs::interrupt(repo)?;
+    if info.kind != Interrupt::None {
+        return Err(GitError::OperationInProgress { state: info.kind });
+    }
+
     let outcome = check::evaluate(spec, &draft.subject, &draft.searchable_body());
     if !outcome.conformant {
         return Err(GitError::NotConformant {
@@ -211,6 +220,49 @@ mod tests {
             footer: "Refs: TIDY-7".into(),
         };
         assert!(preview(&spec, &draft).conformant, "{:?}", preview(&spec, &draft).violations);
+    }
+
+    /// §7.3：中断态下的 `git commit` 语义是"给这次合并收尾"，产物是一个两个父的合并提交，
+    /// 和用户在表单上点的东西不是一回事。界面禁用挡不住直接调用，这里必须自己挡住。
+    #[test]
+    fn an_interrupted_merge_blocks_the_commit_and_writes_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        git(dir.path(), &["init", "-q", "-b", "main", "."]);
+        git(dir.path(), &["config", "user.name", "张三"]);
+        git(dir.path(), &["config", "user.email", "z@example.com"]);
+
+        std::fs::write(dir.path().join("a.txt"), "base\n").expect("write");
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "feat: 基线"]);
+        git(dir.path(), &["checkout", "-q", "-b", "side"]);
+        std::fs::write(dir.path().join("a.txt"), "side\n").expect("write");
+        git(dir.path(), &["commit", "-q", "-am", "feat: 支线改法"]);
+        git(dir.path(), &["checkout", "-q", "main"]);
+        std::fs::write(dir.path().join("a.txt"), "main\n").expect("write");
+        git(dir.path(), &["commit", "-q", "-am", "feat: 主干改法"]);
+
+        let before = git(dir.path(), &["rev-parse", "HEAD"]);
+        let merged = process::run(Some(dir.path()), &["merge", "side"]).expect("spawn merge");
+        assert!(!merged.success, "这次合并必须冲突：{}", merged.stdout);
+
+        let err = match create(dir.path(), &Spec::default(), &draft("feat: 中断里还想提交")) {
+            Ok(commit) => panic!("合并中断时不该提交成功：{}", commit.id),
+            Err(err) => err,
+        };
+        let GitError::OperationInProgress { state } = &err else {
+            panic!("合并中断要报专门的错误码，实际：{err:?}");
+        };
+        assert_eq!(*state, Interrupt::Merge, "错误里要带上是哪一种中断态");
+        let rendered = format!("{err:?}");
+        assert!(
+            rendered.contains("operation_in_progress") && rendered.contains("合并进行中"),
+            "文案要能看出是哪一种中断，实际：{rendered}"
+        );
+        assert_eq!(
+            git(dir.path(), &["rev-parse", "HEAD"]),
+            before,
+            "被拒之后 HEAD 必须还在冲突前的那条提交上"
+        );
     }
 
     #[test]

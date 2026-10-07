@@ -23,6 +23,11 @@ pub enum GitError {
     },
     /// 索引里没有任何已暂存的改动
     NothingStaged,
+    /// 仓库停在 merge / rebase / cherry-pick / revert 的中断态上（§7.3）。
+    /// 哪一种由 state 带出去：界面据此决定提示条文案，也据此禁用写入口。
+    OperationInProgress {
+        state: crate::git::refs::Interrupt,
+    },
     /// git 输出与预期的记录结构不符：分隔符数量对不上、时间戳位置落进非数字。
     /// 只把截断后的原文片段放进 detail，用户看到的是通用文案。
     ParseFailure { snippet: String },
@@ -41,6 +46,7 @@ impl GitError {
             Self::GitFailed { .. } => "git_failed",
             Self::NotConformant { .. } => "message_not_conformant",
             Self::NothingStaged => "nothing_staged",
+            Self::OperationInProgress { .. } => "operation_in_progress",
             Self::ParseFailure { .. } => "parse_failure",
             Self::Internal(_) => "internal",
         }
@@ -76,6 +82,10 @@ impl GitError {
                 }
             }
             Self::NothingStaged => "索引里没有任何已暂存的改动，先在「变更」列表里勾上要提交的文件".into(),
+            Self::OperationInProgress { state } => {
+                let label = state.label();
+                format!("{label}：请先完成或中止这次操作，再使用工具的提交")
+            }
             Self::Internal(_) => "工具内部错误，请重试".into(),
         }
     }

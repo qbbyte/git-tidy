@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { NButton, NEmpty, NInput, NSpace, NTag } from "naive-ui";
 import { useReposStore } from "@/stores/repos";
+import { INTERRUPT_LABEL } from "@/api/refs";
 import type { Repo } from "@/api/repo";
 
 /**
@@ -18,6 +19,43 @@ const editing = ref<{ id: number; name: string } | null>(null);
 
 /** 克隆/补齐是长任务，期间所有写入口都要关掉，否则第二次点击会并发抢同一个目录 */
 const busy = computed(() => repos.loading || repos.progress !== null);
+
+/** 当前分支名。以 refs 扫出来的摘要为准，探测结果只做兜底 */
+const branchText = computed(() => {
+  const state = repos.repoState;
+  if (!state) return repos.info?.branch ?? "游离 HEAD";
+  if (state.branch) return state.branch;
+  // 变基过程中 HEAD 是游离的，正在变基的分支名只有 interruptBranch 里有（§7.3）
+  if (state.interruptBranch) {
+    return `${state.interruptBranch}（${INTERRUPT_LABEL[state.interrupt]}）`;
+  }
+  return "游离 HEAD";
+});
+
+/**
+ * 跟踪状态一句话说清。四种说法互斥：远程分支已删 > 没配跟踪分支 > 已同步 > 差多少。
+ * ahead 为 null 是"git 没给这个数字"，已同步正好是这样（实测 [ahead] 只写非零那半）。
+ */
+const trackText = computed(() => {
+  const state = repos.repoState;
+  if (!state || state.branch === null) return "";
+  // 空仓库里 HEAD 指向的是还没诞生的分支：它既没有跟踪分支，也谈不上"未设置"
+  if (!repos.info?.headCommit) return "";
+  if (state.upstreamGone) return "远程分支已删除";
+  if (!state.upstream) return "未设置跟踪分支";
+  if (state.ahead === null) return `${state.upstream}（已同步）`;
+  return `${state.upstream}　↑${state.ahead ?? 0} ↓${state.behind ?? 0}`;
+});
+
+const trackStale = computed(() => {
+  const state = repos.repoState;
+  if (!state) return false;
+  return state.upstreamGone || (state.behind ?? 0) > 0;
+});
+
+const interruptText = computed(() =>
+  repos.interrupted ? INTERRUPT_LABEL[repos.interrupt] : "正常",
+);
 
 async function addPath() {
   const trimmed = path.value.trim();
@@ -172,7 +210,13 @@ onMounted(() => {
     <div v-if="repos.info" class="block">
       <div class="block-title">{{ repos.current?.name }}</div>
       <div class="meta">
-        <div><span class="key">分支</span>{{ repos.info.branch ?? "游离 HEAD" }}</div>
+        <div><span class="key">分支</span>{{ branchText }}</div>
+        <div v-if="trackText" :class="{ warn: trackStale }">
+          <span class="key">跟踪</span>{{ trackText }}
+        </div>
+        <div v-if="repos.repoState" :class="{ warn: repos.interrupted }">
+          <span class="key">状态</span>{{ interruptText }}
+        </div>
         <div v-if="repos.info.headCommit">
           <span class="key">HEAD</span>
           <code>{{ repos.info.headCommit.slice(0, 8) }}</code>
@@ -302,6 +346,11 @@ onMounted(() => {
   font-size: 11px;
   opacity: 0.8;
   word-break: break-all;
+}
+
+/* 落后于远程、跟踪分支被删、有操作卡在半路——这三样都要一眼看见 */
+.warn {
+  color: #b45309;
 }
 
 .clone-button {

@@ -1,4 +1,5 @@
 import { call } from "@/api/client";
+import type { RefBadge } from "@/api/refs";
 
 /** 与 Rust 侧 git/log.rs 的 Commit 一一对应。 */
 export interface Commit {
@@ -11,6 +12,10 @@ export interface Commit {
   body: string;
   merge: boolean;
   revert: boolean;
+  /** 这一条是不是 HEAD 所在的提交，游离 HEAD 时同样为 true */
+  head: boolean;
+  /** 指向这一条的分支 / 远程跟踪分支 / 标签 */
+  refs: RefBadge[];
   /** Summary 在 Rust 侧是 serde(flatten)，到 JSON 里是平铺的三个字段 */
   commitType: string | null;
   scope: string | null;

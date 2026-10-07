@@ -94,6 +94,20 @@ function strokeOf(segment: GraphSegment) {
 const strokeColor = (color: number) => PALETTE[color % PALETTE.length];
 const dotColor = () => (props.row ? strokeColor(props.row.color) : "transparent");
 
+/** 一行最多画几个徽标。一个合并点能挂十几条远程分支，全画出来这一行就溢出了 */
+const MAX_BADGES = 4;
+
+const badges = computed(() => props.commit.refs.slice(0, MAX_BADGES));
+const hiddenCount = computed(() => props.commit.refs.length - badges.value.length);
+
+/**
+ * 游离 HEAD：这条提交是 HEAD，但 refs 里没有一个带"当前"标记
+ * （游离时 git 的装饰就只有光秃秃一个 HEAD，实测）。没有它这行就看不出 HEAD 在哪。
+ */
+const detachedHead = computed(
+  () => props.commit.head && !props.commit.refs.some((badge) => badge.head),
+);
+
 /**
  * 圆点上面那一小截。上一行的连线只画到它自己的底边，而圆点在本行行高的正中，
  * 中间这半截没人画就是一个断口——根提交和"第一父已经排在别的列"的那种行最容易看见。
@@ -149,6 +163,22 @@ function stubOf() {
     <n-tag v-if="commit.breaking" type="error" size="small" :bordered="false">BREAKING</n-tag>
     <n-tag v-if="commit.merge" type="warning" size="small" :bordered="false">merge</n-tag>
     <n-tag v-if="commit.revert" size="small" :bordered="false">revert</n-tag>
+    <div v-if="badges.length || detachedHead" class="refs">
+      <span v-if="detachedHead" class="badge current" title="游离 HEAD：当前提交不落在任何分支上">
+        HEAD
+      </span>
+      <span
+        v-for="badge in badges"
+        :key="`${badge.kind}:${badge.name}`"
+        class="badge"
+        :class="[badge.kind, { head: badge.head }]"
+        :title="badge.head ? `当前 ${badge.name}` : badge.name"
+        >{{ badge.name }}</span
+      >
+      <span v-if="hiddenCount > 0" class="badge more" :title="`还有 ${hiddenCount} 个引用`">
+        +{{ hiddenCount }}
+      </span>
+    </div>
     <span class="subject" :title="commit.subject">{{ commit.subject }}</span>
     <span class="author">{{ commit.authorName }}</span>
     <span class="time">{{ dayjs(commit.time * 1000).format("YYYY-MM-DD HH:mm") }}</span>
@@ -181,6 +211,60 @@ function stubOf() {
   flex: none;
   min-width: 62px;
   justify-content: center;
+}
+
+.refs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  /* 分支名可以很长，也能带斜杠；封顶让主体信息始终看得见 */
+  max-width: 46%;
+  overflow: hidden;
+}
+
+.badge {
+  flex: none;
+  max-width: 160px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.badge.branch {
+  color: #1b6ba8;
+  background: #e2f0fa;
+}
+
+.badge.remote {
+  color: #5a6472;
+  background: #edf0f4;
+}
+
+.badge.tag {
+  color: #8a5a00;
+  background: #fdf1d8;
+}
+
+/* 游离 HEAD 用的那一个：它不是任何一种引用，所以不复用上面三色 */
+.badge.current {
+  color: #6d3bb5;
+  background: #f1e9fb;
+}
+
+/* HEAD 所在的那个引用要一眼看出来，不然一条线上几个徽标得分开数 */
+.badge.head {
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.badge.more {
+  color: #6b7484;
+  background: #f0f2f5;
 }
 
 .subject {

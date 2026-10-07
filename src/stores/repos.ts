@@ -20,6 +20,7 @@ import {
   worktreeStatus,
   type WorkingFile,
 } from "@/api/status";
+import { scanRefs, type Interrupt, type Ref, type RepoState } from "@/api/refs";
 
 /**
  * 多仓库注册表。所有 git 读取都用仓库 id 触发，界面同时只"打开"一个仓库，
@@ -30,6 +31,10 @@ export const useReposStore = defineStore("repos", () => {
   const currentId = ref<number | null>(null);
   const info = ref<RepoInfo | null>(null);
   const workingFiles = ref<WorkingFile[]>([]);
+  /** 打开仓库时扫到的全部引用（本地分支 / 远程跟踪分支 / 标签） */
+  const refs = ref<Ref[]>([]);
+  /** 仓库级状态摘要：当前分支、跟踪与 ahead/behind、中断态（§7.1） */
+  const repoState = ref<RepoState | null>(null);
   const loading = ref(false);
   /** 暂存/取消暂存单独一个开关：它只该锁住勾选区，不该让侧栏的按钮一起变灰 */
   const staging = ref(false);
@@ -43,10 +48,15 @@ export const useReposStore = defineStore("repos", () => {
   const changedFiles = computed(() =>
     workingFiles.value.filter((file) => !file.staged || file.worktreeStatus !== " "),
   );
+  /** 没有扫到摘要时按"没有中断"处理，不能让界面凭空禁掉按钮 */
+  const interrupt = computed<Interrupt>(() => repoState.value?.interrupt ?? "none");
+  const interrupted = computed(() => interrupt.value !== "none");
 
   function clearOpened() {
     info.value = null;
     workingFiles.value = [];
+    refs.value = [];
+    repoState.value = null;
   }
 
   async function run<T>(task: () => Promise<T>): Promise<T | null> {
@@ -121,7 +131,22 @@ export const useReposStore = defineStore("repos", () => {
     // 取回来的可能已经是另一个仓库的了（用户又点了一次），比对后再写
     if (!fetched || currentId.value !== id) return;
     info.value = fetched;
+    await refreshRefs();
     await refreshStatus();
+  }
+
+  /**
+   * 引用扫描。徽标、侧栏状态摘要和中断态都出自这一次，所以 browse 仓库也要扫——
+   * 它读不了工作区，但 refs、HEAD 和标记文件在 treeless 克隆里都齐全。
+   */
+  async function refreshRefs() {
+    const id = currentId.value;
+    if (id === null) return;
+    const scanned = await run(() => scanRefs(id));
+    // 期间切了仓库就丢掉，否则摘要会挂在错的仓库上
+    if (!scanned || currentId.value !== id) return;
+    refs.value = scanned.refs;
+    repoState.value = scanned.state;
   }
 
   /** 只重读待提交文件。提交完、暂存完都走这里，不必把仓库信息再探测一遍。 */
@@ -138,6 +163,8 @@ export const useReposStore = defineStore("repos", () => {
     if (id === null) return;
     const fetched = await run(() => refreshRepo(id));
     if (fetched && currentId.value === id) info.value = fetched;
+    // 提交会把分支指针往前推一格，徽标和 ahead/behind 跟着一起重扫
+    await refreshRefs();
     await refreshStatus();
   }
 
@@ -199,9 +226,13 @@ export const useReposStore = defineStore("repos", () => {
     currentId,
     info,
     workingFiles,
+    refs,
+    repoState,
     stagedFiles,
     changedFiles,
     canCommit,
+    interrupt,
+    interrupted,
     loading,
     staging,
     error,
@@ -211,6 +242,7 @@ export const useReposStore = defineStore("repos", () => {
     addByUrl,
     materialize,
     select,
+    refreshRefs,
     refreshStatus,
     refreshAll,
     stage,

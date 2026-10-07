@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   NAlert,
+  NButton,
   NConfigProvider,
   NMessageProvider,
   NProgress,
@@ -14,6 +15,7 @@ import {
 } from "naive-ui";
 import RepoSidebar from "@/components/RepoSidebar.vue";
 import { useReposStore } from "@/stores/repos";
+import { INTERRUPT_LABEL, type Interrupt } from "@/api/refs";
 
 /**
  * 外壳照 Fork：左栏常驻仓库与只读信息，主区用页签切「历史 / 提交」。
@@ -22,6 +24,19 @@ import { useReposStore } from "@/stores/repos";
 const route = useRoute();
 const router = useRouter();
 const repos = useReposStore();
+
+/**
+ * 每种中断态的出口。这一批只给文字指引，等 M2/M3 有「继续 / 中止」按钮再换成按钮。
+ * 状态名本身不在这里重复定义，用 INTERRUPT_LABEL——它与 Rust 侧 `Interrupt::label()`
+ * 逐字对齐，所以提示条和提交被拒时的错误文案叫法一致。
+ */
+const INTERRUPT_EXIT: Record<Interrupt, string> = {
+  none: "",
+  merge: "解决冲突后用 git merge --continue 收尾，或 git merge --abort 放弃这次合并",
+  rebase: "解决冲突后用 git rebase --continue 继续，或 git rebase --abort 回到变基之前",
+  cherry_pick: "解决冲突后用 git cherry-pick --continue 继续，或 --abort 放弃这次摘取",
+  revert: "解决冲突后用 git revert --continue 继续，或 --abort 放弃这次回滚",
+};
 
 const themeOverrides: GlobalThemeOverrides = {
   common: {
@@ -39,10 +54,24 @@ const commitTabEnabled = computed(() => repos.canCommit);
 const headline = computed(() => {
   const repo = repos.current;
   if (!repo) return "还没有打开仓库";
-  const branch = repos.info?.branch ?? "游离 HEAD";
-  const dirty = repos.workingFiles.length;
-  return `${repo.name} · ${branch} · ${dirty} 项待提交`;
+  return `${repo.name} · ${branchPart()} · ${repos.workingFiles.length} 项待提交`;
 });
+
+/**
+ * 中断时这里直接换成中断态：变基过程中 HEAD 是游离的，写"游离 HEAD"会让人以为
+ * 分支丢了，而真正要回答的是"哪个分支正卡在半路"（§7.3）。
+ */
+function branchPart() {
+  const state = repos.repoState;
+  if (repos.interrupted) {
+    const label = INTERRUPT_LABEL[repos.interrupt];
+    return state?.interruptBranch ? `${label}：${state.interruptBranch}` : label;
+  }
+  return state?.branch ?? repos.info?.branch ?? "游离 HEAD";
+}
+
+const interruptTitle = computed(() => INTERRUPT_LABEL[repos.interrupt]);
+const interruptExit = computed(() => INTERRUPT_EXIT[repos.interrupt]);
 
 function go(name: string | number) {
   router.push({ name: String(name) });
@@ -67,6 +96,26 @@ function closeError() {
               <n-tab name="commit" :disabled="!commitTabEnabled">提交</n-tab>
             </n-tabs>
           </header>
+
+          <!-- 中断态常驻、关不掉：它不是一个可以"知道了"的提醒，而是写入口为什么灰着 -->
+          <n-alert
+            v-if="repos.interrupted"
+            class="banner interrupt"
+            type="warning"
+            :title="interruptTitle"
+            :closable="false"
+          >
+            <div>{{ interruptExit }}</div>
+            <div class="muted">完成或中止之前，工具的提交与写操作会被拒绝。</div>
+            <n-button
+              size="tiny"
+              class="recheck"
+              :loading="repos.loading"
+              @click="repos.refreshAll()"
+            >
+              已在终端处理完，重读一次
+            </n-button>
+          </n-alert>
 
           <div v-if="repos.progress" class="banner">
             <div class="banner-title">下载中：{{ repos.progress.url }}</div>
@@ -149,6 +198,15 @@ body,
 
 .banner {
   margin: 12px 16px 0;
+}
+
+/* 常驻提示条不能被主区挤压掉：整屏就数它最不能看不见 */
+.interrupt {
+  flex: none;
+}
+
+.recheck {
+  margin-top: 8px;
 }
 
 .banner-title {

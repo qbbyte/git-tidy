@@ -4,5 +4,6 @@ pub mod graph;
 pub mod log;
 pub mod message;
 pub mod process;
+pub mod refs;
 pub mod repo;
 pub mod status;

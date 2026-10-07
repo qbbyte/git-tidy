@@ -29,7 +29,12 @@ import {
  * 表单里看到的"能不能提交"、commit-msg hook 的拦截、符合率报告的计数，
  * 走的是同一个内核，所以不会出现"表单放过、hook 拦下"这种解释不了的报错。
  */
-const props = defineProps<{ repoId: number }>();
+/**
+ * locked = 仓库正卡在某个中断态里（合并/变基/摘取/回滚未收尾）。
+ * 这时候按钮必须灰：Rust 侧的 `commit_create` 同样会拒，前端先挡一层是为了
+ * 让人在按下之前就看见原因，而不是收到一条错误码。
+ */
+const props = defineProps<{ repoId: number; locked: boolean }>();
 const emit = defineEmits<{ (event: "committed"): void }>();
 
 /** 输入停顿后再发 IPC：逐字符发会把每次按键变成一次磁盘读配置 */
@@ -97,7 +102,8 @@ const blockers = computed(() => outcome.value?.violations.filter((item) => item.
 const warnings = computed(() => outcome.value?.violations.filter((item) => !item.blocking) ?? []);
 
 const canSubmit = computed(
-  () => !!outcome.value?.conformant && !checking.value && !submitting.value,
+  () =>
+    !!outcome.value?.conformant && !checking.value && !submitting.value && !props.locked,
 );
 
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -279,7 +285,10 @@ onUnmounted(() => {
         <n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submit">
           提交
         </n-button>
-        <span v-if="!outcome?.conformant" class="muted">
+        <span v-if="locked" class="muted">
+          有操作卡在半路，先完成或中止（见顶部提示条），期间不能提交
+        </span>
+        <span v-else-if="!outcome?.conformant" class="muted">
           {{ checking ? "校验中" : "有拦截级问题，改完再提交" }}
         </span>
       </n-space>

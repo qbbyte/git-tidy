@@ -111,7 +111,12 @@ function pathLabel(file: WorkingFile) {
       </div>
     </section>
 
-    <commit-form class="form" :repo-id="repoId" @committed="repos.refreshAll()" />
+    <commit-form
+      class="form"
+      :repo-id="repoId"
+      :locked="repos.interrupted"
+      @committed="repos.refreshAll()"
+    />
   </div>
 </template>
 

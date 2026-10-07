@@ -158,6 +158,12 @@ fn lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// 解析失败时带进 detail 和日志的原文片段。截断是必须的：一条 `%b` 可能是几十 KB 的正文，
+/// 原样塞进错误载荷会把 IPC 撑爆，而用户要看的是"哪一条坏了"，不是全文。
+pub(crate) fn snippet(record: &str) -> String {
+    record.chars().take(200).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

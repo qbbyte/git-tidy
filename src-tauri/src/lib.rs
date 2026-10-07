@@ -35,6 +35,7 @@ pub fn run() {
             commands::commit::commit_list,
             commands::commit::commit_create,
             commands::graph::commit_graph,
+            commands::refs::refs_scan,
             commands::spec::spec_for,
             commands::spec::message_check,
             commands::spec::commit_scopes,
