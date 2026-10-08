@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
-import { NButton, NCollapse, NCollapseItem, NEmpty, NInput, NSpace, NTag } from "naive-ui";
+import { NButton, NCollapse, NCollapseItem, NDropdown, NEmpty, NInput, NSpace, type DropdownOption } from "naive-ui";
 import RefPanel from "@/components/RefPanel.vue";
 import StashPanel from "@/components/StashPanel.vue";
 import OpJournal from "@/components/OpJournal.vue";
@@ -23,6 +23,12 @@ const url = ref("");
 const showUrl = ref(false);
 const editing = ref<{ id: number; name: string } | null>(null);
 const repoQuery = ref("");
+/** 添加表单默认收起：它常驻时占五六行，而大多数时候根本不用添加仓库 */
+const showAdd = ref(false);
+/** 「仓库详情」（路径与 git 版本）默认收起 */
+const showRepoInfo = ref(false);
+/** 当前开着动作菜单的仓库行。菜单靠它控制自身可见 */
+const repoMenu = ref<number | null>(null);
 /** 引用面板默认收起：它占侧栅里最高的一块，而分支列表属于“要用时才看” */
 const refsOpen = ref<string[]>([]);
 
@@ -133,6 +139,52 @@ function removeRepo(repo: Repo) {
   repos.remove(repo.id);
 }
 
+function toggleRepoMenu(id: number) {
+  repoMenu.value = repoMenu.value === id ? null : id;
+}
+
+function closeRepoMenu(id: number) {
+  if (repoMenu.value === id) repoMenu.value = null;
+}
+
+/**
+ * 仓库行的动作菜单。
+ *
+ * 「从列表移除」单独用分隔线隔开：它与「克隆 / 重命名」并排平铺时，
+ * 手一滑点到的就是删除——虽然它只删注册记录、磁盘上的仓库不动（§6.1）。
+ */
+function repoActions(repo: Repo): DropdownOption[] {
+  return [
+    ...(repo.kind === "browse" ? [{ label: "克隆到本地", key: "clone", disabled: busy.value }] : []),
+    { label: "重命名", key: "rename" },
+    { label: "复制路径", key: "copy-path" },
+    { type: "divider", key: "divider" },
+    { label: "从列表移除", key: "remove" },
+  ];
+}
+
+async function copyRepoPath(repo: Repo) {
+  try {
+    await navigator.clipboard.writeText(repo.path);
+  } catch {
+    // WebView2 在非安全上下文里会拒绝。不弹提示打扰用户：
+    // 路径本来就写在行的 title 上，复制失败也不是什么大事
+  }
+}
+
+function onRepoAction(repo: Repo, key: string) {
+  closeRepoMenu(repo.id);
+  if (key === "clone") {
+    void repos.materialize(repo.id);
+  } else if (key === "rename") {
+    startRename(repo);
+  } else if (key === "copy-path") {
+    void copyRepoPath(repo);
+  } else if (key === "remove") {
+    removeRepo(repo);
+  }
+}
+
 function kindTag(repo: Repo) {
   return repo.kind === "worktree"
     ? { text: "本地", type: "success" as const }
@@ -171,23 +223,38 @@ watch(
     -->
     <div v-if="repos.info" class="pinned">
       <div class="pinned-title">{{ repos.current?.name }}</div>
-      <div class="meta">
-        <div><span class="key">分支</span>{{ branchText }}</div>
-        <div v-if="trackText" :class="{ warn: trackStale }">
-          <span class="key">跟踪</span>{{ trackText }}
-        </div>
-        <div v-if="repos.repoState" :class="{ warn: repos.interrupted }">
-          <span class="key">状态</span>{{ interruptText }}
-        </div>
-        <div v-if="repos.info.headCommit">
-          <span class="key">HEAD</span>
-          <code>{{ repos.info.headCommit.slice(0, 8) }}</code>
-        </div>
-        <div v-else><span class="key">HEAD</span>空仓库</div>
-        <div><span class="key">待提交</span>{{ repos.workingFiles.length }} 项</div>
-        <div class="path" :title="repos.info.workTree">{{ repos.info.workTree }}</div>
-        <div class="path muted" :title="repos.info.gitDir">{{ repos.info.gitDir }}</div>
+
+      <!-- 分支与跟踪合成一行：它们本来就是一个事实的两半，分两行反而难对 -->
+      <div class="pinned-line">
+        <span class="branch" :title="branchText">{{ branchText }}</span>
+        <span v-if="trackText" class="track" :class="{ warn: trackStale }">{{ trackText }}</span>
       </div>
+
+      <div class="pinned-line">
+        <code v-if="repos.info.headCommit">{{ repos.info.headCommit.slice(0, 8) }}</code>
+        <span v-else class="muted">空仓库</span>
+        <span class="sep" aria-hidden="true">·</span>
+        <span :class="{ strong: repos.workingFiles.length > 0 }">
+          {{ repos.workingFiles.length }} 项待提交
+        </span>
+        <span v-if="repos.interrupted" class="warn">{{ interruptText }}</span>
+      </div>
+
+      <!--
+        路径与 git 版本是诊断信息，不是日常看的——它们原来占两行常驻，
+        而路径一长就换行，把下面整个列表往下推。收进一个可展开的行。
+      -->
+      <button class="pinned-more" type="button" @click="showRepoInfo = !showRepoInfo">
+        <span class="chevron" :class="{ collapsed: !showRepoInfo }" aria-hidden="true" />
+        仓库详情
+      </button>
+
+      <div v-if="showRepoInfo" class="pinned-more-body">
+        <div :title="repos.info.workTree"><span class="key">工作区</span>{{ repos.info.workTree }}</div>
+        <div :title="repos.info.gitDir"><span class="key">git 目录</span>{{ repos.info.gitDir }}</div>
+        <div><span class="key">git</span>{{ repos.info.gitVersion }}</div>
+      </div>
+
       <n-button
         v-if="repos.current?.kind === 'browse'"
         size="small"
@@ -203,69 +270,19 @@ watch(
 
     <!-- 只有这一段滚动：钉住区与品牌不跟着走 -->
     <div class="side-scroll">
-    <div class="block">
-      <div class="block-title">仓库</div>
-      <div class="repo-list">
-        <div
-          v-for="repo in filteredRepos"
-          :key="repo.id"
-          class="repo-row"
-          :class="{ active: repo.id === repos.currentId }"
-          @click="repos.select(repo.id)"
-        >
-          <div class="row-main">
-            <span class="repo-name" :title="repo.path">{{ repo.name }}</span>
-            <n-tag v-if="repo.id !== (editing?.id ?? -1)" :type="kindTag(repo).type" size="small">
-              {{ kindTag(repo).text }}
-            </n-tag>
-          </div>
-          <div class="row-actions">
-            <template v-if="editing && editing.id === repo.id">
-              <n-input
-                v-model:value="editing.name"
-                size="small"
-                placeholder="留空回落到目录名"
-                @keyup.enter="saveRename"
-                @click.stop
-              />
-              <n-button size="small" type="primary" @click.stop="saveRename">存</n-button>
-              <n-button size="small" quaternary @click.stop="editing = null">取消</n-button>
-            </template>
-            <template v-else>
-              <n-button
-                v-if="repo.kind === 'browse'"
-                size="small"
-                secondary
-                type="primary"
-                :disabled="busy"
-                @click.stop="repos.materialize(repo.id)"
-              >
-                克隆
-              </n-button>
-              <n-button size="small" quaternary @click.stop="startRename(repo)">重命名</n-button>
-              <n-button size="small" quaternary type="error" @click.stop="removeRepo(repo)">
-                移除
-              </n-button>
-            </template>
-          </div>
-        </div>
-        <n-empty v-if="!repos.repos.length" size="small" description="还没有仓库" />
-      <n-empty v-else-if="filteredRepos.length === 0" size="small" description="没有匹配的仓库" />
+    <div class="section">
+      <div class="section-title">
+        仓库
+        <button class="section-action" type="button" @click="showAdd = !showAdd">
+          {{ showAdd ? "收起" : "添加" }}
+        </button>
       </div>
 
       <!--
-        仓库多到十几二十个时列表没法扫。搜索框只在那时才占地方——
-        三个仓库的时候它只是一条多余的输入框。
+        添加表单按需展开：路径输入框 + 三个按钮 + URL 区常年占着五六行，
+        而大多数时候根本不用添加仓库。
       -->
-      <n-input
-        v-if="repos.repos.length > SEARCH_THRESHOLD"
-        v-model:value="repoQuery"
-        size="small"
-        clearable
-        placeholder="按名称或路径过滤仓库"
-      />
-
-      <n-space vertical size="small">
+      <div v-if="showAdd" class="add">
         <n-input
           v-model:value="path"
           size="small"
@@ -299,7 +316,65 @@ watch(
             地址方式只下载提交对象，不建工作区：能读提交列表，不能暂存、不能提交。想要完整能力就添加之后点「克隆」。
           </div>
         </template>
-      </n-space>
+      </div>
+
+      <n-input
+        v-if="repos.repos.length > SEARCH_THRESHOLD"
+        v-model:value="repoQuery"
+        size="small"
+        clearable
+        placeholder="按名称或路径过滤仓库"
+      />
+
+      <div class="repo-list">
+        <div
+          v-for="repo in filteredRepos"
+          :key="repo.id"
+          class="repo-row"
+          :class="{ active: repo.id === repos.currentId }"
+          @click="repos.select(repo.id)"
+        >
+          <template v-if="editing && editing.id === repo.id">
+            <n-input
+              v-model:value="editing.name"
+              size="small"
+              placeholder="留空回落到目录名"
+              class="rename"
+              @keyup.enter="saveRename"
+              @click.stop
+            />
+            <n-button size="small" type="primary" @click.stop="saveRename">存</n-button>
+            <n-button size="small" quaternary @click.stop="editing = null">取消</n-button>
+          </template>
+
+          <template v-else>
+            <!--
+              类型用一颗色点而不是文字标签：本地/只读只有两档，文字标签每行占二十几像素，
+              而仓库名才是要读的东西。色点 + title 已经够。
+            -->
+            <span class="kind-dot" :class="repo.kind" :title="kindTag(repo).text" />
+            <span class="repo-name" :title="repo.path">{{ repo.name }}</span>
+
+            <!--
+              动作收进一个菜单。原来每行三个按钮悬停展开，
+              「移除」还和「克隆」并排——破坏性操作不该和常用操作一个待遇。
+            -->
+            <n-dropdown
+              trigger="click"
+              placement="bottom-start"
+              :options="repoActions(repo)"
+              @clickoutside="closeRepoMenu(repo.id)"
+              @select="onRepoAction(repo, $event)"
+            >
+              <button class="row-menu" type="button" :class="{ open: repoMenu === repo.id }" @click.stop="toggleRepoMenu(repo.id)">
+                ⋯
+              </button>
+            </n-dropdown>
+          </template>
+        </div>
+        <n-empty v-if="!repos.repos.length" size="small" description="还没有仓库" />
+        <n-empty v-else-if="filteredRepos.length === 0" size="small" description="没有匹配的仓库" />
+      </div>
     </div>
 
     <!--
@@ -361,12 +436,16 @@ watch(
 /*
  * 钉住区：侧栅里唯一不滚的一块。给它自己的底色，
  * 不然边界只靠一条线，而下面全是卡片，一条线不够。
+ *
+ * 只有三行：标题、分支+跟踪、HEAD+待提交。
+ * 路径与 git 版本收进「仓库详情」那一行——它们是诊断信息，
+ * 而路径一长就换行，会把下面整个列表往下推。
  */
 .pinned {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -382,6 +461,144 @@ watch(
   white-space: nowrap;
 }
 
+.pinned-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2);
+  min-width: 0;
+}
+
+.pinned-line .branch {
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pinned-line .track {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pinned-line .sep {
+  opacity: 0.4;
+}
+
+/* 有待提交时给点存在感：它意味着工作区不干净，而那是写操作的入口状态 */
+.pinned-line .strong {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.pinned-more {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.pinned-more:hover {
+  color: var(--accent);
+}
+
+.pinned-more-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.pinned-more-body > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pinned-more-body .key {
+  display: inline-block;
+  width: 56px;
+  color: var(--text-3);
+}
+
+/* 箭头用 CSS 三角形画——只需要一个方向，不值得引一个图标库 */
+.chevron {
+  flex: none;
+  width: 0;
+  height: 0;
+  border: 4px solid transparent;
+  border-top-color: currentColor;
+  margin-top: 3px;
+  transition: transform 120ms ease;
+}
+
+.chevron.collapsed {
+  transform: rotate(-90deg);
+  margin-top: 0;
+}
+
+/**
+ * 区块标题。
+ *
+ * 侧栅里三种标题样式（block-title / NCollapse / 面板自己的 head）并排时，
+ * 看不出它们是平级的——所以统一成一套，折叠与否只由箭头区分。
+ */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 0 2px;
+}
+
+.section-action {
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.section-action:hover {
+  text-decoration: underline;
+}
+
+.add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .block {
   display: flex;
   flex-direction: column;
@@ -390,26 +607,18 @@ watch(
 
 .brand {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .brand-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--accent);
 }
 
 .brand-sub {
   font-size: 11px;
-  opacity: 0.65;
-}
-
-.block-title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--text-3);
 }
 
@@ -421,9 +630,9 @@ watch(
 
 .repo-row {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
   border-radius: 6px;
   cursor: pointer;
 }
@@ -436,25 +645,67 @@ watch(
   background: var(--surface-selected);
 }
 
-.row-main {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+/*
+ * 本地 / 只读只有两档，用一颗色点而不是文字标签：
+ * 标签每行占二十几像素，而仓库名才是要读的东西。
+ */
+.kind-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.kind-dot.worktree {
+  background: var(--ok-text);
+}
+
+.kind-dot.browse {
+  background: var(--text-3);
 }
 
 .repo-name {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
-  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.row-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+/*
+ * 动作入口平时不占视觉重量，悬停/打开时才显出来。
+ * 三个按钮常驻时，一屏的仓库列表全是按钮，仓库名反而读不出来。
+ */
+.row-menu {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.repo-row:hover .row-menu,
+.row-menu.open {
+  opacity: 1;
+}
+
+.row-menu:hover {
+  /* 行本身已经是 hover 底色，按钮这一格要再深一档才看得出边界 */
+  background: var(--border);
+  color: var(--text-1);
+}
+
+.rename {
+  flex: 1;
+  min-width: 0;
 }
 
 .meta {
@@ -466,7 +717,7 @@ watch(
 .key {
   display: inline-block;
   width: 56px;
-  opacity: 0.65;
+  color: var(--text-3);
 }
 
 .ref-list {
