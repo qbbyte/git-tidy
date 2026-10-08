@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import dayjs from "dayjs";
+import { ref } from "vue";
 import { NButton, NEmpty, NPopconfirm, NTag } from "naive-ui";
 import { useWriteStore } from "@/stores/write";
 
@@ -60,6 +61,12 @@ function label(action: string) {
   return ACTION_LABELS[action] ?? action;
 }
 
+/**
+ * 面板自己折叠。表头里装着「撤销上一步」——所以表头可点不能吃掉那个按钮的点击，
+ * 按钮上写了 @click.stop。
+ */
+const collapsed = ref(false);
+
 function short(sha: string | null) {
   return sha === null ? "" : sha.slice(0, 8);
 }
@@ -67,13 +74,15 @@ function short(sha: string | null) {
 
 <template>
   <div class="journal">
-    <div class="head">
+    <div class="head toggle" :class="{ collapsed }" @click="collapsed = !collapsed">
+      <span class="chevron" aria-hidden="true" />
       <span>写操作 {{ writes.journal.length }}</span>
       <n-popconfirm
         :disabled="!writes.canUndo || writes.busy"
         positive-text="撤销"
         negative-text="算了"
         @positive-click="writes.undo()"
+        @click.stop
       >
         <template #trigger>
           <n-button size="small" :disabled="!writes.canUndo || writes.busy" :loading="writes.busy">
@@ -85,6 +94,7 @@ function short(sha: string | null) {
       </n-popconfirm>
     </div>
 
+    <template v-if="!collapsed">
     <n-empty v-if="!writes.journal.length" size="small" description="还没有写操作" />
 
     <div v-else class="list">
@@ -115,6 +125,7 @@ function short(sha: string | null) {
         {{ item.sha.slice(0, 8) }} {{ item.reference }}
       </code>
     </div>
+    </template>
   </div>
 </template>
 
@@ -128,12 +139,46 @@ function short(sha: string | null) {
 .head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-3);
+}
+
+/* 撤销按钮要推到右边；其余文字聚在左边 */
+.head > span:first-of-type {
+  flex: 1;
+}
+
+/* 可折叠的表头。点击区给满整行 */
+.head.toggle {
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+}
+
+.head.toggle:hover {
+  background: var(--surface-hover);
+}
+
+/* 箭头用 CSS 三角形画——这个图标只需要一个方向，不值得引一个图标库 */
+.chevron {
+  flex: none;
+  width: 0;
+  height: 0;
+  border: 4px solid transparent;
+  border-top-color: currentColor;
+  margin-top: 3px;
+  transition: transform 120ms ease;
+}
+
+.head.collapsed .chevron {
+  transform: rotate(-90deg);
+  margin-top: 0;
 }
 
 .list {

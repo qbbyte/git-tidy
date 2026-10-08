@@ -1,12 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import { NAlert, NButton, NEmpty, NSpace, NSpin, NVirtualList } from "naive-ui";
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
+import {
+  NAlert,
+  NButton,
+  NDropdown,
+  NEmpty,
+  NSpace,
+  NSpin,
+  NVirtualList,
+  useDialog,
+  useMessage,
+  type DropdownOption,
+  type VirtualListInst,
+} from "naive-ui";
 import CommitRow from "@/components/CommitRow.vue";
 import CommitDetail from "@/components/CommitDetail.vue";
 import FilterBar from "@/components/FilterBar.vue";
 import { useCommitStore } from "@/stores/commits";
 import { useDetailStore } from "@/stores/detail";
 import { useReposStore } from "@/stores/repos";
+import { useWriteStore } from "@/stores/write";
 import { specFor } from "@/api/spec";
 import { COMMIT_ROW_HEIGHT } from "@/styles/tokens";
 import { usePaneDivider } from "@/composables/usePaneDivider";
@@ -19,6 +32,9 @@ import type { CommitFilter } from "@/api/commit";
 const repos = useReposStore();
 const commitStore = useCommitStore();
 const detail = useDetailStore();
+const writes = useWriteStore();
+const dialog = useDialog();
+const message = useMessage();
 
 const repoId = computed(() => repos.currentId);
 
@@ -106,6 +122,164 @@ function pick(sha: string) {
   void detail.open(repoId.value, sha, commit);
 }
 
+// ---------------------------------------------------------------- 键盘导航
+
+const listRef = ref<VirtualListInst | null>(null);
+
+/** 当前选中项在可见列表里的下标；-1 表示还没选 */
+const selectedIndex = computed(() => {
+  const sha = detail.sha;
+  if (sha === null) return -1;
+  return commitStore.commits.findIndex((item) => item.id === sha);
+});
+
+/**
+ * 焦点在输入框里就不抢键。
+ *
+ * 不加这一条的话，在筛选栏的关键词框里按 ↓ 会把选中提交往下移，
+ * 而用户以为自己是在选下拉建议——这是最容易被投诉的一类「快捷键抽风」。
+ */
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.tagName !== "string") return false;
+  if (el.isContentEditable) return true;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
+}
+
+function selectAt(index: number) {
+  const commits = commitStore.commits;
+  const commit = commits[index];
+  if (!commit || repoId.value === null) return;
+  void detail.open(repoId.value, commit.id, commit);
+  // 键盘往下走时视口不会自己跟，得手动滚过去
+  listRef.value?.scrollTo({ key: commit.id });
+}
+
+function onKeyDown(event: KeyboardEvent) {
+  // 带修饰键的组合留给浏览器（复制粘贴、刷新等）
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (isTypingTarget(event.target)) return;
+
+  if (event.key === "Escape") {
+    // 只关详情。弹层自己也会吃掉 Esc——它先关自己，这一条是余下的那一次；
+    // 用户在弹层里按 Esc 时会看到“弹层关了、详情也关了”，属于可接受的粗糙，
+    // 比去侦测“当前有没有弹层开着”可靠
+    if (detail.sha === null) return;
+    detail.close();
+    event.preventDefault();
+    return;
+  }
+
+  const commits = commitStore.commits;
+  if (!commits.length) return;
+  const at = selectedIndex.value;
+
+  if (event.key === "ArrowDown" || event.key === "j") {
+    // 没选过时往下 = 选第一条，而不是跳过第一条
+    selectAt(at === -1 ? 0 : Math.min(at + 1, commits.length - 1));
+    event.preventDefault();
+  } else if (event.key === "ArrowUp" || event.key === "k") {
+    selectAt(at === -1 ? commits.length - 1 : Math.max(at - 1, 0));
+    event.preventDefault();
+  }
+}
+
+// ---------------------------------------------------------------- 右键菜单
+
+const menu = reactive({ show: false, x: 0, y: 0, sha: "" });
+
+function openMenu(event: MouseEvent, sha: string) {
+  // 右键也选中那一行：菜单里的“摘取 / 回滚 / 重置”都是针对这条的，
+  // 而详情面板停在另一条上会让人以为菜单点错了
+  const commit = commitStore.commits.find((item) => item.id === sha) ?? null;
+  if (repoId.value !== null && detail.sha !== sha) {
+    void detail.open(repoId.value, sha, commit);
+  }
+  menu.sha = sha;
+  menu.x = event.clientX;
+  menu.y = event.clientY;
+  menu.show = true;
+}
+
+function closeMenu() {
+  menu.show = false;
+}
+
+const menuOptions = computed<DropdownOption[]>(() => {
+  const commit = commitStore.commits.find((item) => item.id === menu.sha);
+  if (!commit) return [];
+  const writable = writes.canWrite;
+  return [
+    { label: "摘取到当前分支", key: "pick", disabled: !writable },
+    {
+      // 合并提交的回滚必须选主线（§7.11），那个选择不能由工具替用户做，
+      // 所以菜单里禁用它，让用户去详情面板那边选
+      label: commit.merge ? "回滚这条（合并提交需在详情里选主线）" : "回滚这条",
+      key: "revert",
+      disabled: !writable || commit.merge,
+    },
+    {
+      label: "重置到这条",
+      key: "reset",
+      children: [
+        { label: "soft：改动回到暂存区", key: "reset:soft", disabled: !writable },
+        { label: "mixed：改动回到工作区", key: "reset:mixed", disabled: !writable },
+        { label: "hard：丢弃这条之后的一切", key: "reset:hard", disabled: !writable },
+      ],
+    },
+    { type: "divider", key: "divider-1" },
+    { label: "复制 sha", key: "copy-sha" },
+    { label: "复制标题", key: "copy-subject" },
+  ];
+});
+
+async function copyText(text: string, what: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    message.success(`已复制${what}`);
+  } catch {
+    // WebView2 在非安全上下文里会拒绝；告知用户而不是静默失败
+    message.warning(`复制失败，${what}：${text}`);
+  }
+}
+
+function onMenuSelect(key: string) {
+  const commit = commitStore.commits.find((item) => item.id === menu.sha);
+  closeMenu();
+  if (!commit) return;
+  if (key === "copy-sha") {
+    void copyText(commit.id, "提交号");
+    return;
+  }
+  if (key === "copy-subject") {
+    void copyText(commit.subject, "标题");
+    return;
+  }
+
+  const run = async () => {
+    if (key === "pick") {
+      await writes.pick(commit.id);
+    } else if (key === "revert") {
+      await writes.revert(commit.id, null);
+    } else if (key.startsWith("reset:")) {
+      await writes.reset(key.slice("reset:".length) as "soft" | "mixed" | "hard", commit.id);
+    }
+  };
+
+  if (key === "reset:hard") {
+    // 丢数据的操作不给一键就走的路
+    dialog.warning({
+      title: "重置到这条提交（hard）",
+      content: `会扔掉 ${commit.id.slice(0, 8)} 之后的全部提交，以及工作区里未提交的改动。`,
+      positiveText: "确认丢弃",
+      negativeText: "算了",
+      onPositiveClick: run,
+    });
+    return;
+  }
+  void run();
+}
+
 /** 换筛选：列表与图一起按新的可见集合重算（§7.7） */
 function applyFilter(next: CommitFilter) {
   if (repoId.value === null) return;
@@ -152,6 +326,11 @@ watch(repoId, (id) => {
   void commitStore.open(id);
   void loadTypes();
 });
+
+// 键盘监听挂在 window 上：焦点在列表里的哪一行都不影响它能收到。
+// 只在这一页存活时绑定，否则在「提交」页按 j 也会改历史页的选中项。
+onMounted(() => window.addEventListener("keydown", onKeyDown));
+onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 </script>
 
 <template>
@@ -214,6 +393,7 @@ watch(repoId, (id) => {
 
             <n-virtual-list
               v-else
+              ref="listRef"
               :items="commitStore.commits"
               :item-size="COMMIT_ROW_HEIGHT"
               key-field="id"
@@ -227,6 +407,7 @@ watch(repoId, (id) => {
                   :lanes="commitStore.graphLanes"
                   :selected="item.id === detail.sha"
                   @click="pick(item.id)"
+                  @contextmenu="openMenu($event, item.id)"
                 />
               </template>
             </n-virtual-list>
@@ -274,6 +455,21 @@ watch(repoId, (id) => {
           <commit-detail :repo-id="repoId" :commit="selectedCommit" />
         </section>
       </div>
+
+      <!--
+        右键菜单挂在页面层而不是每一行：虚拟列表的每一行都挂一个菜单的话，
+        翻页时成百个实例跟着建拆，而同一时刻只有一个是开的。
+      -->
+      <n-dropdown
+        trigger="manual"
+        placement="bottom-start"
+        :show="menu.show"
+        :x="menu.x"
+        :y="menu.y"
+        :options="menuOptions"
+        @clickoutside="closeMenu"
+        @select="onMenuSelect"
+      />
     </template>
   </div>
 </template>

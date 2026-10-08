@@ -30,7 +30,7 @@ const props = defineProps<{
   selected?: boolean;
 }>();
 
-const emit = defineEmits<{ click: [] }>();
+const emit = defineEmits<{ click: []; contextmenu: [event: MouseEvent] }>();
 
 /** 行高从 tokens 取，虚拟列表的 item-size 从同一个值取——见 COMMIT_ROW_HEIGHT 的注释 */
 const ROW_HEIGHT = COMMIT_ROW_HEIGHT;
@@ -195,6 +195,7 @@ function stubOf() {
     class="commit-row"
     :class="{ selected }"
     @click="emit('click')"
+    @contextmenu.prevent="emit('contextmenu', $event)"
   >
     <svg class="graph" :width="graphWidth()" :height="ROW_HEIGHT" aria-hidden="true">
       <template v-if="row">

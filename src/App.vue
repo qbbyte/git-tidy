@@ -5,6 +5,7 @@ import {
   NAlert,
   NButton,
   NConfigProvider,
+  NDialogProvider,
   NMessageProvider,
   NProgress,
   NSpace,
@@ -116,6 +117,7 @@ function closeError() {
 
 <template>
   <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme-overrides="themeOverrides">
+    <n-dialog-provider>
     <n-message-provider>
       <div ref="shell" class="shell" :class="{ resizing: sider.dragging.value }">
         <repo-sidebar class="sider" :style="{ width: `${sider.size.value}px` }" />
@@ -218,6 +220,7 @@ function closeError() {
         </section>
       </div>
     </n-message-provider>
+    </n-dialog-provider>
   </n-config-provider>
 </template>
 

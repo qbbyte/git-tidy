@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
-import { NButton, NEmpty, NInput, NSpace, NTag } from "naive-ui";
+import { NButton, NCollapse, NCollapseItem, NEmpty, NInput, NSpace, NTag } from "naive-ui";
 import RefPanel from "@/components/RefPanel.vue";
 import StashPanel from "@/components/StashPanel.vue";
 import OpJournal from "@/components/OpJournal.vue";
@@ -22,6 +22,25 @@ const path = ref("");
 const url = ref("");
 const showUrl = ref(false);
 const editing = ref<{ id: number; name: string } | null>(null);
+const repoQuery = ref("");
+/** 引用面板默认收起：它占侧栅里最高的一块，而分支列表属于“要用时才看” */
+const refsOpen = ref<string[]>([]);
+
+/** 仓库列表超过这个数才给搜索框——三个仓库时它只是一条多余的输入框 */
+const SEARCH_THRESHOLD = 8;
+
+/**
+ * 按名称或路径过滤。仓库名可能重名（同一个项目的两个副本），所以路径也要参与匹配：
+ * 只按名称搜时两条都叫 demo-1，搜出来分不出哪个是哪个。
+ */
+const filteredRepos = computed(() => {
+  const query = repoQuery.value.trim().toLowerCase();
+  if (!query) return repos.repos;
+  return repos.repos.filter(
+    (repo) =>
+      repo.name.toLowerCase().includes(query) || repo.path.toLowerCase().includes(query),
+  );
+});
 
 /** 克隆/补齐是长任务，期间所有写入口都要关掉，否则第二次点击会并发抢同一个目录 */
 const busy = computed(() => repos.loading || repos.progress !== null);
@@ -144,11 +163,51 @@ watch(
       <span class="brand-sub">本地 Git 提交治理</span>
     </div>
 
+    <!--
+      钉住区：分支、跟踪、HEAD、待提交条数。
+      这些是每时每刻都要看的东西，原来它们混在下面的滚动流里——
+      而那个流里有仓库列表、引用列表、stash、写操作日志，一屏装不下，
+      于是「我现在在哪个分支」要靠向上滚才能找到。
+    -->
+    <div v-if="repos.info" class="pinned">
+      <div class="pinned-title">{{ repos.current?.name }}</div>
+      <div class="meta">
+        <div><span class="key">分支</span>{{ branchText }}</div>
+        <div v-if="trackText" :class="{ warn: trackStale }">
+          <span class="key">跟踪</span>{{ trackText }}
+        </div>
+        <div v-if="repos.repoState" :class="{ warn: repos.interrupted }">
+          <span class="key">状态</span>{{ interruptText }}
+        </div>
+        <div v-if="repos.info.headCommit">
+          <span class="key">HEAD</span>
+          <code>{{ repos.info.headCommit.slice(0, 8) }}</code>
+        </div>
+        <div v-else><span class="key">HEAD</span>空仓库</div>
+        <div><span class="key">待提交</span>{{ repos.workingFiles.length }} 项</div>
+        <div class="path" :title="repos.info.workTree">{{ repos.info.workTree }}</div>
+        <div class="path muted" :title="repos.info.gitDir">{{ repos.info.gitDir }}</div>
+      </div>
+      <n-button
+        v-if="repos.current?.kind === 'browse'"
+        size="small"
+        type="primary"
+        secondary
+        class="clone-button"
+        :loading="busy"
+        @click="repos.materialize(repos.current.id)"
+      >
+        克隆到本地
+      </n-button>
+    </div>
+
+    <!-- 只有这一段滚动：钉住区与品牌不跟着走 -->
+    <div class="side-scroll">
     <div class="block">
       <div class="block-title">仓库</div>
       <div class="repo-list">
         <div
-          v-for="repo in repos.repos"
+          v-for="repo in filteredRepos"
           :key="repo.id"
           class="repo-row"
           :class="{ active: repo.id === repos.currentId }"
@@ -191,7 +250,20 @@ watch(
           </div>
         </div>
         <n-empty v-if="!repos.repos.length" size="small" description="还没有仓库" />
+      <n-empty v-else-if="filteredRepos.length === 0" size="small" description="没有匹配的仓库" />
       </div>
+
+      <!--
+        仓库多到十几二十个时列表没法扫。搜索框只在那时才占地方——
+        三个仓库的时候它只是一条多余的输入框。
+      -->
+      <n-input
+        v-if="repos.repos.length > SEARCH_THRESHOLD"
+        v-model:value="repoQuery"
+        size="small"
+        clearable
+        placeholder="按名称或路径过滤仓库"
+      />
 
       <n-space vertical size="small">
         <n-input
@@ -230,48 +302,21 @@ watch(
       </n-space>
     </div>
 
-    <div v-if="repos.info" class="block">
-      <div class="block-title">{{ repos.current?.name }}</div>
-      <div class="meta">
-        <div><span class="key">分支</span>{{ branchText }}</div>
-        <div v-if="trackText" :class="{ warn: trackStale }">
-          <span class="key">跟踪</span>{{ trackText }}
-        </div>
-        <div v-if="repos.repoState" :class="{ warn: repos.interrupted }">
-          <span class="key">状态</span>{{ interruptText }}
-        </div>
-        <div v-if="repos.info.headCommit">
-          <span class="key">HEAD</span>
-          <code>{{ repos.info.headCommit.slice(0, 8) }}</code>
-        </div>
-        <div v-else><span class="key">HEAD</span>空仓库</div>
-        <div><span class="key">待提交</span>{{ repos.workingFiles.length }} 项</div>
-        <div class="path" :title="repos.info.workTree">{{ repos.info.workTree }}</div>
-        <div class="path muted" :title="repos.info.gitDir">{{ repos.info.gitDir }}</div>
-        <div class="muted">git {{ repos.info.gitVersion }}</div>
-      </div>
-      <n-button
-        v-if="repos.current?.kind === 'browse'"
-        size="small"
-        type="primary"
-        secondary
-        class="clone-button"
-        :loading="busy"
-        @click="repos.materialize(repos.current.id)"
-      >
-        克隆到本地
-      </n-button>
-    </div>
-
     <!--
       引用列表读自 §7.3 那一次 for-each-ref，不另起进程。
       **写**操作拆到 RefPanel：读的这一列常驻摆几十个分支，写入口悬停才露出来，
       而且每一个都要自己的确认（§7.10）。
-    -->
-    <ref-panel v-if="repos.canCommit" />
 
-    <!-- 冲突解决器只在有未合并文件时占地方。§7.13：它在中断态里才有用，
-         M2 阶段只有「一键退回」是唯一出口，M3 才有逐块取舍。 -->
+      默认收起：它是侧栅里最高的一块（内部已占 30vh），而分支列表属于“要用时才看”。
+      标题上的计数让人知道里面有多少，不用展开就知道。
+    -->
+    <n-collapse v-if="repos.canCommit" v-model:value="refsOpen" arrow-placement="right">
+      <n-collapse-item :title="`引用 ${repos.refs.length}`" name="refs">
+        <ref-panel />
+      </n-collapse-item>
+    </n-collapse>
+
+    <!-- 冲突解决器只在有未合并文件时占地方。§7.13：它在中断态里才有用 -->
     <div v-if="writes.hasConflicts" class="block">
       <conflict-resolver />
     </div>
@@ -283,6 +328,7 @@ watch(
     <div v-if="repos.currentId !== null" class="block">
       <op-journal />
     </div>
+    </div>
   </aside>
 </template>
 
@@ -290,15 +336,50 @@ watch(
 .side {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
   padding: 14px;
   /* 不写 height:100%：项目没有 box-sizing 重置，100% 是内容高，再加上上下各 14px 内边距
      就变成 100vh + 28px，把文档撑出窗口，右侧因此多出一条整页滚动条。
      .shell 是 flex 行容器，交叉轴默认 stretch 已经把高度正好给到 100vh（含内边距） */
-  overflow: auto;
+  /* 滚动只发生在下面那段里：品牌与钉住区不跟着滚 */
+  overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--surface-app);
   font-size: 12px;
+}
+
+.side-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/*
+ * 钉住区：侧栅里唯一不滚的一块。给它自己的底色，
+ * 不然边界只靠一条线，而下面全是卡片，一条线不够。
+ */
+.pinned {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.pinned-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .block {

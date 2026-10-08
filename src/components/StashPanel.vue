@@ -21,6 +21,15 @@ const includeUntracked = ref(true);
 const selectedPaths = ref<string[]>([]);
 const branchFrom = ref<{ reference: string; name: string } | null>(null);
 
+/**
+ * 面板自己折叠，不用外层再套一层折叠器。
+ *
+ * 套 NCollapse 就得把面板自己的表头拿掉（否则标题与计数出现两遍），而这个表头里
+ * 装的是「工作区有 N 项改动」与 stash 数量——收起了就看不全。
+ * 改成表头本身可点：标题与计数一直在，按钮也都在。
+ */
+const collapsed = ref(false);
+
 const entries = computed(() => writes.stashes);
 const hasWork = computed(() => repos.workingFiles.length > 0);
 
@@ -62,12 +71,15 @@ function isPicked(path: string) {
 
 <template>
   <div class="stash">
-    <div class="head">
+    <div class="head toggle" :class="{ collapsed }" @click="collapsed = !collapsed">
+      <span class="chevron" aria-hidden="true" />
       <span>stash {{ entries.length }}</span>
       <span class="muted">
         {{ hasWork ? `工作区有 ${repos.workingFiles.length} 项改动` : "工作区干净" }}
       </span>
     </div>
+
+    <template v-if="!collapsed">
 
     <div v-if="repos.interrupted" class="warn">
       现在停在「{{ repos.interrupt }}」上，先退回或处理完再动 stash。
@@ -146,6 +158,7 @@ function isPicked(path: string) {
     <div class="muted">
       取出撞冲突时本版本不解决冲突：条目会保留，顶部给一键退回，或在终端里处理完。
     </div>
+    </template>
   </div>
 </template>
 
@@ -158,12 +171,45 @@ function isPicked(path: string) {
 
 .head {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-3);
+}
+
+/* 可折叠的表头。点击区给满整行，否则要点中文字才收得起 */
+.head.toggle {
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+}
+
+.head.toggle:hover {
+  background: var(--surface-hover);
+}
+
+/*
+ * 箭头用 CSS 三角形画，不为一个图标引入 @vicons——
+ * 这个图标只需要一个方向，旋转一个 border 三角就够。
+ */
+.chevron {
+  flex: none;
+  width: 0;
+  height: 0;
+  border: 4px solid transparent;
+  border-top-color: currentColor;
+  margin-top: 3px;
+  transition: transform 120ms ease;
+}
+
+.head.collapsed .chevron {
+  transform: rotate(-90deg);
+  margin-top: 0;
 }
 
 .pick {
