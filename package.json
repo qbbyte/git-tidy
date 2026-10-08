@@ -9,6 +9,7 @@
     "check:conflict": "node --experimental-strip-types scripts/check-conflict.mjs",
     "check:conflict-real": "powershell -ExecutionPolicy Bypass -File scripts/verify-conflict.ps1",
     "check:tokens": "node --experimental-strip-types scripts/check-tokens.mjs",
+    "check:pane": "node --experimental-strip-types scripts/check-pane-divider.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

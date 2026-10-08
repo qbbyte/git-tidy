@@ -9,6 +9,7 @@ import { useBrowseStore } from "@/stores/browse";
 import { useDetailStore } from "@/stores/detail";
 import { useReposStore } from "@/stores/repos";
 import { formatBytes } from "@/format";
+import { usePaneDivider } from "@/composables/usePaneDivider";
 import type { TreeEntry } from "@/api/file";
 
 /**
@@ -23,6 +24,22 @@ const detail = useDetailStore();
 const router = useRouter();
 
 const repoId = computed(() => repos.currentId);
+
+/**
+ * 文件树栏的宽度，单位是像素而不是比例。
+ *
+ * 导航栏不该跟着窗口一起变宽：宽屏上把它拉长只会让文件名那一列凭空多出几百像素空白，
+ * 而文件正文才是要宽的那一个。
+ */
+const split = ref<HTMLElement | null>(null);
+const divider = usePaneDivider({
+  container: split,
+  storageKey: "git-tidy:files:split",
+  fallback: 320,
+  min: 220,
+  max: 520,
+  unit: "px",
+});
 const tab = ref<"content" | "blame" | "history">("content");
 
 /** rev 补全：HEAD 加全部引用（分支、远程跟踪分支、标签） */
@@ -119,8 +136,8 @@ watch(
         <span v-if="browse.treeLoading" class="muted">读取中…</span>
       </div>
 
-      <div class="split">
-        <section class="pane">
+      <div ref="split" class="split" :class="{ resizing: divider.dragging.value }">
+        <section class="pane" :style="{ width: `${divider.size.value}px` }">
           <n-alert v-if="browse.treeError" type="error" :title="browse.treeError.message">
             <div>错误码：{{ browse.treeError.code }}</div>
             <pre v-if="browse.treeError.detail" class="raw-output">{{ browse.treeError.detail }}</pre>
@@ -133,6 +150,16 @@ watch(
             @pick="pick"
           />
         </section>
+
+        <div
+          class="divider"
+          role="separator"
+          aria-orientation="vertical"
+          :aria-valuenow="Math.round(divider.size.value)"
+          title="拖动调宽窄，双击恢复默认"
+          @pointerdown="divider.onPointerDown"
+          @dblclick="divider.reset"
+        />
 
         <section class="detail">
           <n-empty v-if="file === null" description="点左边的一个文件" class="placeholder" />
@@ -236,13 +263,42 @@ watch(
 
 .split {
   display: flex;
-  gap: 12px;
+  gap: 0;
   flex: 1;
   min-height: 0;
 }
 
+.split.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.divider {
+  position: relative;
+  flex: none;
+  width: 3px;
+  margin: 0 4px;
+  cursor: col-resize;
+  border-radius: 2px;
+  transition: background 120ms ease;
+}
+
+/* 热区扩到 15px，不占布局——理由见 CommitsView 里的同一条注释 */
+.divider::after {
+  content: "";
+  position: absolute;
+  inset: 0 -6px;
+}
+
+.divider:hover,
+.split.resizing .divider {
+  background: var(--accent);
+}
+
 .pane {
-  flex: 0 0 320px;
+  /* 宽度由内联的 px 值给定，所以不能让它再被 flex 压缩：
+     拖到 520px 而实际只剩 480px，用户会以为拖拽坏了 */
+  flex: none;
   min-width: 0;
   background: var(--surface);
   border: 1px solid var(--border);

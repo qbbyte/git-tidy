@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { NButton, NDatePicker, NInput, NSelect, NSpace, NTag } from "naive-ui";
+import { NButton, NDatePicker, NInput, NPopover, NSelect, NSpace, NTag } from "naive-ui";
 import { filterIsEmpty, type CommitFilter } from "@/api/commit";
 import type { Ref } from "@/api/refs";
 
@@ -105,6 +105,23 @@ function normalizeProps(filter: CommitFilter): CommitFilter {
   return next;
 }
 
+/**
+ * 「更多条件」里有值的项数。
+ *
+ * 收进弹层就等于藏起来了：条件生效了但主行上看不见，用户会以为筛选没生效。
+ * 所以主行上那个按钮带一个计数，弹层里改动时它跟着变。
+ */
+const secondaryCount = computed(() => {
+  const set: boolean[] = [
+    path.value.trim() !== "",
+    since.value !== null,
+    until.value !== null,
+    pickedTypes.value.length > 0,
+    conformant.value !== "any",
+  ];
+  return set.filter(Boolean).length;
+});
+
 function apply() {
   emit("apply", collect());
 }
@@ -151,31 +168,59 @@ function clear() {
         class="keyword"
         @keyup.enter="apply"
       />
-      <n-input
-        v-model:value="path"
-        size="small"
-        clearable
-        placeholder="路径"
-        class="narrow"
-        @keyup.enter="apply"
-      />
-      <n-date-picker v-model:value="since" size="small" type="date" placeholder="起始日期" clearable />
-      <n-date-picker v-model:value="until" size="small" type="date" placeholder="截止日期" clearable />
-      <n-select
-        v-model:value="pickedTypes"
-        :options="types.map((type) => ({ label: type, value: type }))"
-        multiple
-        size="small"
-        clearable
-        placeholder="type"
-        class="narrow"
-      />
-      <n-select
-        v-model:value="conformant"
-        :options="conformantOptions"
-        size="small"
-        class="narrow"
-      />
+
+      <!--
+        路径 / 日期 / type / 合规性 收进这一层。
+        原来八个控件平铺在 `:wrap=false` 的一行里，而内容区扣除侧栅后只有约 950px——
+        `:wrap=false` 意味着它不换行而是溢出，于是输入框被挤到只剩几十像素。
+        主行留分支、作者、关键词这三个最常用的，剩下的放这里，按钮上带生效项数。
+      -->
+      <n-popover trigger="click" placement="bottom-start" :show-arrow="false">
+        <template #trigger>
+          <n-button size="small" :type="secondaryCount ? 'primary' : 'default'" quaternary>
+            更多条件<template v-if="secondaryCount"> · {{ secondaryCount }}</template>
+          </n-button>
+        </template>
+        <div class="more">
+          <label class="more-row">
+            <span class="more-key">路径</span>
+            <n-input
+              v-model:value="path"
+              size="small"
+              clearable
+              placeholder="只匹配这个路径下的改动"
+              @keyup.enter="apply"
+            />
+          </label>
+          <div class="more-row">
+            <span class="more-key">日期</span>
+            <n-space :wrap="false" size="small">
+              <n-date-picker v-model:value="since" size="small" type="date" placeholder="起始" clearable />
+              <n-date-picker v-model:value="until" size="small" type="date" placeholder="截止" clearable />
+            </n-space>
+          </div>
+          <label class="more-row">
+            <span class="more-key">type</span>
+            <n-select
+              v-model:value="pickedTypes"
+              :options="types.map((type) => ({ label: type, value: type }))"
+              multiple
+              size="small"
+              clearable
+              placeholder="不限"
+            />
+          </label>
+          <label class="more-row">
+            <span class="more-key">合规性</span>
+            <n-select
+              v-model:value="conformant"
+              :options="conformantOptions"
+              size="small"
+            />
+          </label>
+        </div>
+      </n-popover>
+
       <n-button size="small" type="primary" :loading="busy" :disabled="!dirty" @click="apply">
         筛选
       </n-button>
@@ -215,6 +260,26 @@ function clear() {
 
 .keyword {
   width: 190px;
+}
+
+/* 弹层里的表单按标签在上、控件在下的竖排，比一堆等宽控件挤在一起好认 */
+.more {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 320px;
+  padding: 4px 2px;
+}
+
+.more-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.more-key {
+  font-size: 11px;
+  color: var(--text-3);
 }
 
 .echo {

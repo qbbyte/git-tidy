@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   NAlert,
@@ -19,6 +19,7 @@ import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { INTERRUPT_LABEL, type Interrupt } from "@/api/refs";
 import { FONT_UI, RADIUS_CONTROL, tokens } from "@/styles/tokens";
+import { usePaneDivider } from "@/composables/usePaneDivider";
 
 /**
  * 外壳照 Fork：左栏常驻仓库与只读信息，主区用页签切「历史 / 提交」。
@@ -28,6 +29,21 @@ const route = useRoute();
 const router = useRouter();
 const repos = useReposStore();
 const writes = useWriteStore();
+
+/**
+ * 侧栏宽度，像素单位：它是导航，带宽固定比跟着窗口一起长要好。
+ *
+ * 上限 420 是因为再宽就变成第二个主区了，而主区里还摆着列表与 diff 两栏。
+ */
+const shell = ref<HTMLElement | null>(null);
+const sider = usePaneDivider({
+  container: shell,
+  storageKey: "git-tidy:sidebar:width",
+  fallback: 280,
+  min: 220,
+  max: 420,
+  unit: "px",
+});
 
 /**
  * 每种中断态的出口。这一批只给文字指引，等 M2/M3 有「继续 / 中止」按钮再换成按钮。
@@ -101,18 +117,32 @@ function closeError() {
 <template>
   <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme-overrides="themeOverrides">
     <n-message-provider>
-      <div class="shell">
-        <repo-sidebar class="sider" />
+      <div ref="shell" class="shell" :class="{ resizing: sider.dragging.value }">
+        <repo-sidebar class="sider" :style="{ width: `${sider.size.value}px` }" />
+
+        <div
+          class="sider-divider"
+          role="separator"
+          aria-orientation="vertical"
+          :aria-valuenow="Math.round(sider.size.value)"
+          title="拖动调宽窄，双击恢复默认"
+          @pointerdown="sider.onPointerDown"
+          @dblclick="sider.reset"
+        />
 
         <section class="main">
+          <!--
+            仓库名与页签：以前是 space-between 把页签甩到最右、标题缩成 12px 淡字，
+            全屏最该被看见的上下文反而最弱。现在页签左对齐当主导航，标题当标题。
+          -->
           <header class="bar">
-            <span class="headline" :title="headline">{{ headline }}</span>
             <n-tabs type="line" size="small" :value="activeTab" @update:value="go">
               <n-tab name="history">历史</n-tab>
               <!-- 文件页只读浏览，不碰工作区，所以 browse 仓库也摆出来 -->
               <n-tab name="files">文件</n-tab>
               <n-tab name="commit" :disabled="!commitTabEnabled">提交</n-tab>
             </n-tabs>
+            <span class="headline" :title="headline">{{ headline }}</span>
           </header>
 
           <!-- 中断态常驻、关不掉：它不是一个可以"知道了"的提醒，而是写入口为什么灰着 -->
@@ -198,9 +228,35 @@ function closeError() {
   background: var(--surface-app);
 }
 
+.shell.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .sider {
   flex: none;
-  width: 280px;
+}
+
+.sider-divider {
+  position: relative;
+  flex: none;
+  width: 3px;
+  margin: 0 2px;
+  cursor: col-resize;
+  border-radius: 2px;
+  transition: background 120ms ease;
+}
+
+/* 热区扩到 15px，不占布局——理由见 CommitsView 里的同一条注释 */
+.sider-divider::after {
+  content: "";
+  position: absolute;
+  inset: 0 -6px;
+}
+
+.sider-divider:hover,
+.shell.resizing .sider-divider {
+  background: var(--accent);
 }
 
 .main {
@@ -213,16 +269,20 @@ function closeError() {
 .bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-  padding: 8px 16px;
+  padding: 6px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
+/*
+ * 标题给足权重：仓库名、分支、待提交条数是每时每刻都要看的东西，
+ * 原来压到 12px + 0.8 透明度和那排正文一样重，等于把它藏了。
+ */
 .headline {
-  font-size: 12px;
-  opacity: 0.8;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

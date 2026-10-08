@@ -9,6 +9,7 @@ import { useDetailStore } from "@/stores/detail";
 import { useReposStore } from "@/stores/repos";
 import { specFor } from "@/api/spec";
 import { COMMIT_ROW_HEIGHT } from "@/styles/tokens";
+import { usePaneDivider } from "@/composables/usePaneDivider";
 import type { CommitFilter } from "@/api/commit";
 
 /**
@@ -20,6 +21,34 @@ const commitStore = useCommitStore();
 const detail = useDetailStore();
 
 const repoId = computed(() => repos.currentId);
+
+/**
+ * 左右两栏的比例。
+ *
+ * 默认给详情（右边）六成：diff 的横向空间比提交列表值钱得多，1.15:1 时两边各半，
+ * 看一个改了二十个文件的提交就得横向滚。
+ *
+ * `containerMinWidth` 是「另一栏至少留这么宽」——拖到详情只剩 200px 时
+ * 代码会挤成一条，先卡住而不是等用户自己发现。
+ */
+const split = ref<HTMLElement | null>(null);
+const divider = usePaneDivider({
+  container: split,
+  storageKey: "git-tidy:history:split",
+  fallback: 0.4,
+  min: 0.2,
+  max: 0.7,
+  unit: "ratio",
+  // 详情栏（补集）至少留这么宽：diff 的横向空间比提交列表值钱。
+  // 取得太大会有副作用——窗口一窄两个下限就互相打架，见 usePaneDivider 的 clamp
+  containerMinWidth: 380,
+});
+
+/** 列表栏的宽度。分隔条那 3px ＋ 两侧 4px 边距不从这里扣——
+ *  详情栏是 flex:1，会自然吃掉剩下的，列表栏只要占准自己的那一份 */
+const listStyle = computed(() => ({
+  width: `${divider.size.value * 100}%`,
+}));
 
 /**
  * 右半边的标题用列表里那条提交本身，不再为它单取一次（行数据已经全在这儿了）。
@@ -134,21 +163,6 @@ watch(repoId, (id) => {
     />
 
     <template v-else>
-      <div class="count-line">
-        <span class="muted">共 {{ commitStore.total }} 条提交</span>
-        <span v-if="commitStore.commits.length" class="muted">
-          已读出 {{ commitStore.commits.length }} 条
-        </span>
-        <span v-if="commitStore.graphLoading" class="muted">历史走向读取中…</span>
-        <!--
-          解析层筛选（type / 合规）要分段扫历史，扫到上限时 Rust 会置位。
-          这时候“共 N 条”与实得条数可能对不上，必须写明，不能让人以为那就是全部。
-        -->
-        <span v-if="commitStore.truncated" class="scanned muted">
-          只扫了历史的前一段，下面可能还有
-        </span>
-      </div>
-
       <filter-bar
         v-if="repoId !== null"
         :filter="commitStore.filter"
@@ -159,8 +173,8 @@ watch(repoId, (id) => {
         @clear="clearFilter"
       />
 
-      <div class="split">
-        <section class="list-pane">
+      <div ref="split" class="split" :class="{ resizing: divider.dragging.value }">
+        <section class="list-pane" :style="listStyle">
           <n-alert
             v-if="commitStore.error && !hasRows"
             type="error"
@@ -218,7 +232,24 @@ watch(repoId, (id) => {
             </n-virtual-list>
           </template>
 
-          <n-space align="center">
+          <!--
+            计数行沉到这里，与「已全部加载 / 下一段读取中」同属“列表现在到哪了”。
+            原来它单独占一行在列表上方，而下面已经有了一行状态——两处说同一件事。
+          -->
+          <n-space align="center" class="status-line">
+            <span class="muted">共 {{ commitStore.total }} 条</span>
+            <span v-if="commitStore.commits.length" class="muted">
+              已读出 {{ commitStore.commits.length }} 条
+            </span>
+            <span v-if="commitStore.graphLoading" class="muted">历史走向读取中…</span>
+            <!--
+              解析层筛选（type / 合规）要分段扫历史，扫到上限时 Rust 会置位。
+              这时候“共 N 条”与实得条数可能对不上，必须写明，不能让人以为那就是全部。
+            -->
+            <span v-if="commitStore.truncated" class="scanned">
+              只扫了历史的前一段，下面可能还有
+            </span>
+
             <template v-if="commitStore.error && hasRows">
               <span class="muted">读取下一页失败：{{ commitStore.error.message }}</span>
               <n-button size="small" @click="loadMore">重试</n-button>
@@ -227,6 +258,17 @@ watch(repoId, (id) => {
             <span v-else-if="hasRows && commitStore.loadedAll" class="muted">已全部加载</span>
           </n-space>
         </section>
+
+        <!-- 分隔条：3px 透明热区，悬停/拖动时才显出那条 1px 线。给双击回默认 -->
+        <div
+          class="divider"
+          role="separator"
+          aria-orientation="vertical"
+          :aria-valuenow="Math.round(divider.size.value * 100)"
+          :title="'拖动调宽窄，双击恢复默认'"
+          @pointerdown="divider.onPointerDown"
+          @dblclick="divider.reset"
+        />
 
         <section class="detail-pane">
           <commit-detail :repo-id="repoId" :commit="selectedCommit" />
@@ -241,29 +283,61 @@ watch(repoId, (id) => {
   /* 外壳的 .content 已经把剩余高度给过来了，这里按列分给它，不再拿 100vh 去猜 */
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   height: 100%;
-}
-
-.count-line {
-  display: flex;
-  gap: 12px;
-  flex: none;
 }
 
 .split {
   display: flex;
-  gap: 12px;
+  gap: 0;
   flex: 1;
   min-height: 0;
+}
+
+/* 拖的时候整栏不要有选择高亮跟着跑，也不要让鼠标变成箭头 */
+.split.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/*
+ * 分隔条本体只占 3px 布局宽度——两栏本来就贴着，常驻一条宽条会把它们切成两块
+ * 「各自独立」的区域，而它们其实是一件事的两面。
+ *
+ * 热区用伪元素向两侧扩到 15px：3px 拖起来是拿不住的（WCAG 2.5.8 的下限是 24px，
+ * 分隔条按惯例可以例外，但 3px 真的抓不住）。伪元素不吃布局，所以宽度不占地方。
+ */
+.divider {
+  position: relative;
+  flex: none;
+  width: 3px;
+  margin: 0 4px;
+  cursor: col-resize;
+  border-radius: 2px;
+  transition: background 120ms ease;
+}
+
+.divider::after {
+  content: "";
+  position: absolute;
+  inset: 0 -6px;
+}
+
+.divider:hover,
+.split.resizing .divider {
+  background: var(--accent);
 }
 
 .list-pane {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  flex: 1.15;
+  gap: 8px;
   min-width: 0;
+}
+
+.status-line {
+  flex: none;
+  min-height: 24px;
 }
 
 .detail-pane {
