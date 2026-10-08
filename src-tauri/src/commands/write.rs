@@ -1,10 +1,11 @@
-﻿use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 
 use crate::error::GitError;
 use crate::git::branch::{self, Deletable};
+use crate::git::conflict::{self, Conflict};
 use crate::git::reset::{self, ResetMode};
 use crate::git::stash::{self, StashEntry};
 use crate::git::status::{self, HunkSelection, PartialSupport, WorkingFile};
@@ -654,6 +655,168 @@ pub struct StagedFiles {
     #[serde(flatten)]
     pub outcome: Outcome,
     pub files: Vec<WorkingFile>,
+}
+
+// ---------------------------------------------------------------- 冲突解决器（§7.13）
+
+/// 当前仓库全部未合并条目。一个卡片一个。
+///
+/// 读操作，不进 write_guard：它不改变任何东西，只是把索引里的三个 stage 摊给界面。
+#[tauri::command]
+pub async fn conflict_list(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+) -> Result<Vec<Conflict>, GitError> {
+    let repo_path = worktree(state.inner(), id).await?;
+    tauri::async_runtime::spawn_blocking(move || conflict::list(&repo_path))
+        .await
+        .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 解决一个冲突文件。`how` 为 `ours` / `theirs` / `text`（text 带手改正文）。
+///
+/// 走 write_guard 的 Conflict 场：留还原点与审计，但不校验中断态、失败不回滚
+/// （回滚会把用户已经解好的其他冲突一起抹掉）。
+#[tauri::command]
+pub async fn conflict_resolve(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    path: String,
+    how: ResolutionChoice,
+) -> Result<ResolvedConflict, GitError> {
+    let db = state.inner().clone();
+    let repo_path = worktree(&db, id).await?;
+    let file = path.clone();
+    let choice = how.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = guard::run(
+            &db,
+            Request::new(id, repo_path.clone(), "conflict_resolve")
+                .affecting(Some(file), None)
+                .in_conflict_scope(),
+            &mut || {
+                conflict::resolve(&repo_path, &path, choice.clone().into())?;
+                Ok(())
+            },
+        )?;
+        let remaining = conflict::list(&repo_path)?;
+        Ok(ResolvedConflict {
+            outcome,
+            remaining: remaining.len(),
+            conflicts: remaining,
+        })
+    })
+    .await
+    .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 界面上「接受删除」那一条。改删/删改冲突里有一方已经把这个文件删了。
+#[tauri::command]
+pub async fn conflict_accept_deletion(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    path: String,
+) -> Result<ResolvedConflict, GitError> {
+    let db = state.inner().clone();
+    let repo_path = worktree(&db, id).await?;
+    let file = path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = guard::run(
+            &db,
+            Request::new(id, repo_path.clone(), "conflict_accept_deletion")
+                .affecting(Some(file), None)
+                .in_conflict_scope(),
+            &mut || {
+                conflict::accept_deletion(&repo_path, &path)?;
+                Ok(())
+            },
+        )?;
+        let remaining = conflict::list(&repo_path)?;
+        Ok(ResolvedConflict {
+            outcome,
+            remaining: remaining.len(),
+            conflicts: remaining,
+        })
+    })
+    .await
+    .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 全部标记完之后续跑（`--continue`）。
+///
+/// 仍然在 Conflict 场里：续跑要么收尾（仓库回到正常态），要么在下一个提交上再停一次。
+/// 后者是正常结局，所以失败不回滚。
+#[tauri::command]
+pub async fn conflict_continue(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    message: Option<String>,
+) -> Result<Continued, GitError> {
+    let db = state.inner().clone();
+    let repo_path = worktree(&db, id).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // 中断态由前端读出来再传回来可以避免重复 spawn 一个 git，但那是界面给的，
+        // 必须在 Rust 侧重新读一次——传错了不能当成真的
+        let kind = crate::git::refs::interrupt(&repo_path)?.kind;
+        let outcome = guard::run(
+            &db,
+            Request::new(id, repo_path.clone(), "conflict_continue").in_conflict_scope(),
+            &mut || {
+                conflict::continue_operation(&repo_path, kind, message.as_deref())?;
+                Ok(())
+            },
+        )?;
+        let state = crate::git::refs::interrupt(&repo_path)?;
+        Ok(Continued {
+            outcome,
+            finished: state.kind == crate::git::refs::Interrupt::None,
+            still_interrupted: state.kind,
+            branch: state.branch,
+        })
+    })
+    .await
+    .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 界面传过来的解决方式。字符串形态而不是枚举，前端用 `call` 传参只能传 JSON 值。
+#[derive(Clone, serde::Deserialize)]
+#[serde(tag = "how", rename_all = "camelCase")]
+pub enum ResolutionChoice {
+    Ours,
+    Theirs,
+    Text { text: String },
+}
+
+impl From<ResolutionChoice> for conflict::Resolution {
+    fn from(choice: ResolutionChoice) -> Self {
+        match choice {
+            ResolutionChoice::Ours => Self::Ours,
+            ResolutionChoice::Theirs => Self::Theirs,
+            ResolutionChoice::Text { text } => Self::Text(text),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedConflict {
+    #[serde(flatten)]
+    pub outcome: Outcome,
+    /// 还剩几个没解决。界面上直接拿它画进度
+    pub remaining: usize,
+    pub conflicts: Vec<Conflict>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Continued {
+    #[serde(flatten)]
+    pub outcome: Outcome,
+    /// 操作收尾了。false 时界面要接着显示剩余冲突
+    pub finished: bool,
+    /// 还在中断态里的话是哪一种：下一个提交也冲突了就是它
+    pub still_interrupted: crate::git::refs::Interrupt,
+    pub branch: Option<String>,
 }
 
 // ---------------------------------------------------------------- 操作日志与撤销（§7.17）

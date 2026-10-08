@@ -10,6 +10,10 @@ import {
   branchRename,
   branchSwitch,
   cherryPick,
+  conflictAcceptDeletion,
+  conflictContinue,
+  conflictList,
+  conflictResolve,
   remoteDeleteBranch,
   remoteFetch,
   remotePull,
@@ -30,8 +34,10 @@ import {
   writeJournal,
   writeUndo,
   type Backup,
+  type Conflict,
   type Deletable,
   type Outcome,
+  type Resolution,
   type StashEntry,
   type SyncProgress,
   type WriteOpEntry,
@@ -59,6 +65,8 @@ export const useWriteStore = defineStore("write", () => {
   const lastBackupRef = ref<string | null>(null);
 
   const stashes = shallowRef<StashEntry[]>([]);
+  /** 未合并文件。空数组 = 没有冲突，不是"没读"（§7.13） */
+  const conflicts = shallowRef<Conflict[]>([]);
   const journal = shallowRef<WriteOpEntry[]>([]);
   const backups = shallowRef<Backup[]>([]);
   /** 远程命令的逐行输出，最近几条。界面上当进度条文本显示 */
@@ -69,6 +77,9 @@ export const useWriteStore = defineStore("write", () => {
 
   /** 中断态下能做的事只有一件：退回（§3 的 M2 边界） */
   const canWrite = computed(() => repos.canCommit && !repos.interrupted);
+
+  /** 有没有没解决的冲突。界面据此把「续跑」以外的写入口全禁掉 */
+  const hasConflicts = computed(() => conflicts.value.length > 0);
 
   /** 有没有可撤销的写操作：最后一条必须是成功的 */
   const canUndo = computed(
@@ -93,7 +104,7 @@ export const useWriteStore = defineStore("write", () => {
   /** 写操作之后：仓库信息、引用、中断态、日志都要跟上，否则界面摆的是过期状态 */
   async function refreshAfterWrite() {
     await repos.refreshAll();
-    await Promise.all([loadJournal(), loadStashes(), loadBackups()]);
+    await Promise.all([loadJournal(), loadStashes(), loadBackups(), loadConflicts()]);
   }
 
   /** 乐观并发的判据：界面加载时的 HEAD。空仓库与没加载过时传 null（不校验）。 */
@@ -112,6 +123,21 @@ export const useWriteStore = defineStore("write", () => {
     } catch {
       // stash 读不到不是致命的：仓库可能没有 stash，也可能正在中断态里
       stashes.value = [];
+    }
+  }
+
+  /** 读未合并文件。这条只在中断态里有东西，读不到就当没有——
+   *  正常仓库里 `ls-files -u` 是空的，treeless 仓库上则是这条命令直接失败 */
+  async function loadConflicts() {
+    const id = repos.currentId;
+    if (id === null || !repos.canCommit) {
+      conflicts.value = [];
+      return;
+    }
+    try {
+      conflicts.value = await conflictList(id);
+    } catch {
+      conflicts.value = [];
     }
   }
 
@@ -146,6 +172,7 @@ export const useWriteStore = defineStore("write", () => {
     stashes.value = [];
     journal.value = [];
     backups.value = [];
+    conflicts.value = [];
     deletable.value = {};
     lastBackupRef.value = null;
     syncLines.value = [];
@@ -153,7 +180,7 @@ export const useWriteStore = defineStore("write", () => {
   }
 
   async function loadAll() {
-    await Promise.all([loadStashes(), loadJournal(), loadBackups()]);
+    await Promise.all([loadStashes(), loadJournal(), loadBackups(), loadConflicts()]);
   }
 
   /** 记住一次写操作的还原 ref */
@@ -296,6 +323,39 @@ export const useWriteStore = defineStore("write", () => {
     return run(() => abortOperation(id));
   }
 
+  // ---------------------------------------------------------------- 冲突解决器（§7.13）
+
+  /**
+   * 解决一个冲突文件。
+   *
+   * `apply` 传 null 表示「接受删除」：改删/删改里有一方已经把这个文件删了，
+   * 界面单独给一个按钮，走的是另一条命令而不是一个假的解决方式。
+   */
+  async function resolveConflict(path: string, apply: Resolution | null) {
+    const id = requireId();
+    if (id === null) return null;
+    const outcome = await run(() =>
+      apply === null
+        ? conflictAcceptDeletion(id, path)
+        : conflictResolve(id, path, apply),
+    );
+    remember(outcome);
+    return outcome;
+  }
+
+  /**
+   * 续跑收尾。
+   *
+   * `finished` 为 false 不是失败：下一个提交也冲突了，中断态还在，界面要接着显示剩余卡片。
+   */
+  async function continueOperation(message: string | null = null) {
+    const id = requireId();
+    if (id === null) return null;
+    const outcome = await run(() => conflictContinue(id, message));
+    remember(outcome);
+    return outcome;
+  }
+
   // ---------------------------------------------------------------- 远程
 
   async function fetch(remote: string | null = null) {
@@ -386,8 +446,10 @@ export const useWriteStore = defineStore("write", () => {
     error,
     canWrite,
     canUndo,
+    hasConflicts,
     lastBackupRef,
     stashes,
+    conflicts,
     journal,
     backups,
     deletable,
@@ -397,6 +459,7 @@ export const useWriteStore = defineStore("write", () => {
     loadStashes,
     loadJournal,
     loadBackups,
+    loadConflicts,
     clearForRepo,
     watchProgress,
     createBranch,
@@ -416,6 +479,8 @@ export const useWriteStore = defineStore("write", () => {
     revert,
     reset,
     abort,
+    resolveConflict,
+    continueOperation,
     fetch,
     pull,
     push,

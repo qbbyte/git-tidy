@@ -23,6 +23,22 @@ pub struct Request {
     /// 受影响的区间，写进日志给界面显示。分支/tag 这类写作用起点。
     pub affected_from: Option<String>,
     pub affected_to: Option<String>,
+    /// 这个写操作是不是在一次中断态里进行。
+    pub scope: Scope,
+}
+
+/// 写操作所处的场合。六步里有两步要按场合调整，所以显式写出来而不是靠猜。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// 正常写操作：仓库必须不在中断态上，失败就回滚。
+    Standalone,
+    /// 冲突解决器里的写操作（§7.13）。
+    ///
+    /// 两处要变，都是同一件事的后果——用户已经在一个半完成的操作中间了：
+    /// - 不校验中断态：`precheck` 会把任何中断态当错误拒掉，而解决器只能在中断态里干活；
+    /// - 失败不回滚：回滚是 `reset --hard` 回 HEAD，会把用户已经解好的其他冲突一起抹掉。
+    ///   停下来让人看见实际状态，比"假装什么都没发生"要有用。
+    Conflict,
 }
 
 impl Request {
@@ -36,7 +52,14 @@ impl Request {
             verify_tree: false,
             affected_from: None,
             affected_to: None,
+            scope: Scope::Standalone,
         }
+    }
+
+    /// 标记为冲突解决器里的写操作。见 `Scope::Conflict` 里的两条理由。
+    pub fn in_conflict_scope(mut self) -> Request {
+        self.scope = Scope::Conflict;
+        self
     }
 
     pub fn expecting_head(mut self, head: Option<String>) -> Request {
@@ -160,9 +183,11 @@ pub fn run(db: &Arc<Db>, request: Request, body: Body<'_>) -> Result<Outcome, Gi
         }
         Err(err) => {
             // 步骤 5：失败回滚。冲突这类"半完成序列"不回滚——它停在中断态上，
-            // 回滚反而会把用户已经解好的冲突抹掉；这种情况留给 M3 的解决器续跑
-            let interrupted = matches!(&err, GitError::OperationInProgress { .. });
-            let status = if interrupted {
+            // 回滚反而会把用户已经解好的冲突抹掉；这种情况留给 M3 的解决器续跑。
+            // 解决器自己的写操作同样不回滚，见 `Scope::Conflict`。
+            let stays_put = request.scope == Scope::Conflict
+                || matches!(&err, GitError::OperationInProgress { .. });
+            let status = if stays_put {
                 journal::Status::Interrupted
             } else {
                 rollback(&path, head_before.as_deref(), branch.as_deref())?;
@@ -258,9 +283,12 @@ pub struct UndoReport {
 
 /// 步骤 1 的前置校验。三件事都在这里挡掉：中断态、脏工作区、HEAD 被别人挪了。
 fn precheck(request: &Request) -> Result<(), GitError> {
-    let state = refscan::interrupt(&request.path)?;
-    if state.kind != refscan::Interrupt::None {
-        return Err(GitError::OperationInProgress { state: state.kind });
+    // 中断态在 Standalone 下是硬错误；在 Conflict 下正是我们要工作的地方
+    if request.scope == Scope::Standalone {
+        let state = refscan::interrupt(&request.path)?;
+        if state.kind != refscan::Interrupt::None {
+            return Err(GitError::OperationInProgress { state: state.kind });
+        }
     }
     if request.require_clean {
         let dirty = crate::git::status::list(&request.path)?;

@@ -5,6 +5,7 @@ import { NButton, NEmpty, NInput, NSpace, NTag } from "naive-ui";
 import RefPanel from "@/components/RefPanel.vue";
 import StashPanel from "@/components/StashPanel.vue";
 import OpJournal from "@/components/OpJournal.vue";
+import ConflictResolver from "@/components/ConflictResolver.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { INTERRUPT_LABEL } from "@/api/refs";
@@ -268,6 +269,12 @@ watch(
       而且每一个都要自己的确认（§7.10）。
     -->
     <ref-panel v-if="repos.canCommit" />
+
+    <!-- 冲突解决器只在有未合并文件时占地方。§7.13：它在中断态里才有用，
+         M2 阶段只有「一键退回」是唯一出口，M3 才有逐块取舍。 -->
+    <div v-if="writes.hasConflicts" class="block">
+      <conflict-resolver />
+    </div>
 
     <div v-if="repos.canCommit" class="block">
       <stash-panel />

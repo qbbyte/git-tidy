@@ -116,16 +116,28 @@ function closeError() {
           >
             <div>{{ interruptExit }}</div>
             <div class="muted">
-              M2 不提供逐块取舍：冲突要么一键退回，要么在终端里处理完再回来。
+              {{ writes.hasConflicts
+                ? `左栏列出了 ${writes.conflicts.length} 个冲突文件，逐块取舍后可以续跑收尾。`
+                : "没有待解决的冲突：要么已经全部标记完，可以直接续跑，要么去终端里处理完再回来。" }}
             </div>
             <n-space size="small" class="recheck">
               <n-button
+                v-if="!writes.hasConflicts"
                 size="tiny"
                 type="warning"
                 :loading="writes.busy"
                 @click="writes.abort()"
               >
                 一键退回
+              </n-button>
+              <n-button
+                v-if="!writes.hasConflicts"
+                size="tiny"
+                type="primary"
+                :loading="writes.busy"
+                @click="writes.continueOperation(null)"
+              >
+                续跑收尾
               </n-button>
               <n-button
                 size="tiny"

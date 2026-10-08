@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use tauri::Manager;
 
@@ -75,6 +75,11 @@ pub fn run() {
             commands::write::remote_delete_branch,
             commands::write::file_partial_support,
             commands::write::files_stage_hunks,
+            // M3 §7.13：冲突解决器
+            commands::write::conflict_list,
+            commands::write::conflict_resolve,
+            commands::write::conflict_accept_deletion,
+            commands::write::conflict_continue,
             commands::write::write_journal,
             commands::write::write_backups,
             commands::write::write_backup_target,

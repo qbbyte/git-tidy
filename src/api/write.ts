@@ -1,4 +1,4 @@
-﻿import { call } from "@/api/client";
+import { call } from "@/api/client";
 import type { Diff } from "@/api/detail";
 import type { WorkingFile } from "@/api/status";
 
@@ -249,6 +249,113 @@ export function remotePush(
 
 export function remoteDeleteBranch(repoId: number, remote: string, branch: string) {
   return call<SyncReport>("remote_delete_branch", { id: repoId, remote, branch });
+}
+
+// ---------------------------------------------------------------- 冲突解决器（§7.13）
+
+/** 一边的正文。某一栏不存在（一方删了文件）时是 null */
+export interface StageContent {
+  text: string | null;
+  size: number;
+  binary: boolean;
+}
+
+/**
+ * 冲突类型。降级穷举在 §7.13：
+ * - `content` 三方都在，可以逐块取舍；
+ * - `binary` / `submodule` / `renameRename` / `modifyDelete` / `deleteModify` / `bothAdded`
+ *   只能选一边，界面不给逐块合并的入口。
+ */
+export type ConflictKind =
+  | "content"
+  | "modifyDelete"
+  | "deleteModify"
+  | "bothAdded"
+  | "renameRename"
+  | "binary"
+  | "submodule";
+
+/** 三方内容。三栏都可能缺，界面按缺哪一栏决定画几栏 */
+export interface ConflictSides {
+  /** 共同祖先 */
+  base?: StageContent;
+  /** 我方 = HEAD */
+  ours?: StageContent;
+  /** 对方 = 被合进来的那一支 */
+  theirs?: StageContent;
+  binary: boolean;
+}
+
+/** 一个未合并条目 */
+export interface Conflict {
+  path: string;
+  /** porcelain v1 的两位状态，`UU` / `UD` / `DU` / `AA` */
+  status: string;
+  kind: ConflictKind;
+  /** `kind` 的中文说法，直接显示 */
+  label: string;
+  /**
+   * 能不能逐块合并。**用这个，不要从 `sides` 反推**——Rust 侧是看过索引里三个
+   * stage 才得出的结论，界面自己猜会在改删、子模块这类三栏不全的情形下猜错，
+   * 然后开出一个拼不出正确结果的合并区。
+   */
+  threeWay: boolean;
+  /** 只能选一边（`threeWay` 的反面，一起给是为了界面不必自己取反） */
+  pickSideOnly: boolean;
+  /** 双改名时对端的路径 */
+  otherPath?: string;
+  /** 工作区里那份带 `<<<<<<<` 标记的草稿 */
+  worktreeText?: string;
+  sides: ConflictSides;
+}
+
+/** 解决一个冲突文件的方式。`text` 就是用户看到的，写回去的就是它 */
+export type Resolution = { how: "ours" } | { how: "theirs" } | { how: "text"; text: string };
+
+/** 解决之后的结果。带上剩余卡片，省一次 IPC */
+export interface ResolvedConflict {
+  backupRef: string;
+  headBefore: string | null;
+  headAfter: string | null;
+  journalId: number;
+  /** 还剩几个没解决 */
+  remaining: number;
+  conflicts: Conflict[];
+}
+
+/** 续跑的结果。`finished` 为 false 时说明下一个提交又冲突了，中断态还在 */
+export interface Continued {
+  backupRef: string;
+  headBefore: string | null;
+  headAfter: string | null;
+  journalId: number;
+  finished: boolean;
+  /** 还停在哪一种中断态上 */
+  stillInterrupted: "none" | "merge" | "rebase" | "cherryPick" | "revert";
+  /** 变基时被变基的分支 */
+  branch: string | null;
+}
+
+export function conflictList(repoId: number) {
+  return call<Conflict[]>("conflict_list", { id: repoId });
+}
+
+export function conflictResolve(repoId: number, path: string, how: Resolution) {
+  return call<ResolvedConflict>("conflict_resolve", { id: repoId, path, how });
+}
+
+/** 「接受删除」：改删/删改冲突里有一方已经把这个文件删了 */
+export function conflictAcceptDeletion(repoId: number, path: string) {
+  return call<ResolvedConflict>("conflict_accept_deletion", { id: repoId, path });
+}
+
+/**
+ * 全部标记完之后续跑。
+ *
+ * 不是 `finished` 不代表出错：下一个提交也可能冲突，那时要接着解。
+ */
+export function conflictContinue(repoId: number, message: string | null = null) {
+  return call<Continued>("conflict_continue", { id: repoId, message });
 }
 
 // ---------------------------------------------------------------- 日志与撤销（§7.17）
