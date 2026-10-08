@@ -133,7 +133,7 @@ function short(sha: string | null) {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #8a94a6;
+  color: var(--text-3);
 }
 
 .list {
@@ -149,7 +149,7 @@ function short(sha: string | null) {
   align-items: center;
   gap: 4px 6px;
   padding: 3px 0;
-  border-bottom: 1px solid #f4f6f8;
+  border-bottom: 1px solid var(--surface-sunken);
 }
 
 .what {

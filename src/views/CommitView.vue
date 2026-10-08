@@ -165,13 +165,13 @@ function toggleExpand(file: WorkingFile) {
   justify-content: space-between;
   font-size: 12px;
   font-weight: 600;
-  color: #8a94a6;
+  color: var(--text-3);
   padding: 2px 4px;
 }
 
 .file-list {
-  background: #fff;
-  border: 1px solid #e5e8ee;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
   max-height: 38vh;
@@ -179,7 +179,7 @@ function toggleExpand(file: WorkingFile) {
 }
 
 .file-block {
-  border-bottom: 1px solid #f4f6f8;
+  border-bottom: 1px solid var(--surface-sunken);
 }
 
 .file-row {

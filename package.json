@@ -8,6 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "check:conflict": "node --experimental-strip-types scripts/check-conflict.mjs",
     "check:conflict-real": "powershell -ExecutionPolicy Bypass -File scripts/verify-conflict.ps1",
+    "check:tokens": "node --experimental-strip-types scripts/check-tokens.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

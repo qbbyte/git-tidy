@@ -268,8 +268,8 @@ watch(repoId, (id) => {
 .detail-pane {
   flex: 1;
   min-width: 0;
-  background: #fff;
-  border: 1px solid #e5e8ee;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   /* 里面自己滚动：清单和差异各占一段，不能让这一栏整体撑高把窗口拖出滚动条 */
   overflow: hidden;
@@ -281,7 +281,7 @@ watch(repoId, (id) => {
 }
 
 .scanned {
-  color: #8a5a00;
+  color: var(--warn-text);
   opacity: 1;
 }
 
@@ -291,9 +291,9 @@ watch(repoId, (id) => {
   gap: 10px;
   height: 120px;
   padding: 0 16px;
-  background: #fff;
+  background: var(--surface);
   border-radius: 6px;
-  border: 1px solid #e5e8ee;
+  border: 1px solid var(--border);
 }
 
 .commit-list {
@@ -301,9 +301,9 @@ watch(repoId, (id) => {
      上方行数一变（计数行、中断提示条、底部状态行）就差出几十像素的空白 */
   flex: 1;
   min-height: 0;
-  background: #fff;
+  background: var(--surface);
   border-radius: 6px;
-  border: 1px solid #e5e8ee;
+  border: 1px solid var(--border);
 }
 
 .placeholder {

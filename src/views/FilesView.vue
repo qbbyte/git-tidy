@@ -244,8 +244,8 @@ watch(
 .pane {
   flex: 0 0 320px;
   min-width: 0;
-  background: #fff;
-  border: 1px solid #e5e8ee;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
   display: flex;
@@ -258,8 +258,8 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: #fff;
-  border: 1px solid #e5e8ee;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 12px;
   overflow: hidden;
@@ -313,12 +313,12 @@ watch(
   align-items: center;
   gap: 8px;
   padding: 3px 4px;
-  border-bottom: 1px solid #f4f6f8;
+  border-bottom: 1px solid var(--surface-sunken);
 }
 
 .sha {
   flex: none;
-  color: #8a94a6;
+  color: var(--text-3);
 }
 
 .subject {

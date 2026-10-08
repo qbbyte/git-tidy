@@ -110,7 +110,7 @@ const blocks = computed<Block[]>(() => {
 
 .block {
   margin-top: 6px;
-  border: 1px solid #e5e8ee;
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -120,19 +120,19 @@ const blocks = computed<Block[]>(() => {
   align-items: center;
   gap: 8px;
   padding: 3px 8px;
-  background: #f2f6fb;
-  border-bottom: 1px solid #e5e8ee;
+  background: var(--surface-hover);
+  border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
 }
 
 .sha {
-  color: #1f5aa8;
+  color: var(--accent);
   cursor: pointer;
 }
 
 .sha.boundary {
-  color: #6b7484;
+  color: var(--text-2);
   cursor: default;
 }
 
@@ -154,10 +154,10 @@ const blocks = computed<Block[]>(() => {
   width: 44px;
   text-align: right;
   padding-right: 8px;
-  color: #98a2b3;
+  color: var(--text-3);
   user-select: none;
-  background: #fafbfc;
-  border-right: 1px solid #eef1f5;
+  background: var(--surface-sunken);
+  border-right: 1px solid var(--border-soft);
 }
 
 .text {

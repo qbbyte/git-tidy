@@ -278,13 +278,13 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
 }
 
 .revert-note .warn {
-  color: #8a5a00;
+  color: var(--warn-text);
   margin: 4px 0;
 }
 
 .sha {
   flex: none;
-  color: #1f5aa8;
+  color: var(--accent);
   font-size: 12px;
 }
 
@@ -302,7 +302,7 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
 .body {
   margin: 4px 0 0;
   padding: 8px;
-  background: #f7f8fa;
+  background: var(--surface-sunken);
   border-radius: 6px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -328,9 +328,9 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
   flex: none;
   max-height: 30vh;
   overflow: auto;
-  border: 1px solid #e5e8ee;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   margin-top: 6px;
 }
 
@@ -338,15 +338,15 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
   display: flex;
   gap: 10px;
   padding: 5px 8px;
-  border-bottom: 1px solid #eef1f5;
+  border-bottom: 1px solid var(--border-soft);
   font-size: 12px;
-  background: #fafbfc;
+  background: var(--surface-sunken);
   position: sticky;
   top: 0;
 }
 
 .merge-note {
-  color: #8a5a00;
+  color: var(--warn-text);
 }
 
 .file {
@@ -354,16 +354,16 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
-  border-bottom: 1px solid #f4f6f8;
+  border-bottom: 1px solid var(--surface-sunken);
   cursor: pointer;
 }
 
 .file:hover {
-  background: #f2f6fb;
+  background: var(--surface-hover);
 }
 
 .file.picked {
-  background: #e6effa;
+  background: var(--surface-selected);
 }
 
 /* 子模块指针没有差异可看，就不该装作能点 */
@@ -380,23 +380,23 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
   border-radius: 4px;
   font-size: 11px;
   font-family: Consolas, monospace;
-  color: #fff;
+  color: var(--surface);
 }
 
 .s-add {
-  background: #2ea043;
+  background: var(--ok-text);
 }
 
 .s-modify {
-  background: #d9a441;
+  background: var(--warn-text);
 }
 
 .s-delete {
-  background: #cf4b44;
+  background: var(--error-text);
 }
 
 .s-rename {
-  background: #6f7ee0;
+  background: var(--status-rename-bg);
 }
 
 .path {
@@ -418,7 +418,7 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
   gap: 12px;
   margin-top: 6px;
   padding-bottom: 4px;
-  border-bottom: 1px solid #eef1f5;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .file-title {

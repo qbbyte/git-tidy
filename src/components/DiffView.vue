@@ -513,10 +513,10 @@ const stats = computed(() => {
   display: flex;
   gap: 10px;
   padding: 3px 8px;
-  background: #eef2f7;
-  color: #4a5568;
-  border-top: 1px solid #dfe4ec;
-  border-bottom: 1px solid #dfe4ec;
+  background: var(--surface-hover);
+  color: var(--text-2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 
 .hunk-name {
@@ -537,10 +537,10 @@ const stats = computed(() => {
   flex: none;
   width: 34px;
   text-align: right;
-  color: #98a2b3;
+  color: var(--text-3);
   user-select: none;
-  background: #fafbfc;
-  border-right: 1px solid #eef1f5;
+  background: var(--surface-sunken);
+  border-right: 1px solid var(--border-soft);
 }
 
 .code {
@@ -550,15 +550,15 @@ const stats = computed(() => {
 }
 
 .line.add {
-  background: #e6f6ea;
+  background: var(--ok-bg);
 }
 
 .line.delete {
-  background: #fdeceb;
+  background: var(--error-bg);
 }
 
 .line.meta {
-  color: #98a2b3;
+  color: var(--text-3);
   font-style: italic;
 }
 
@@ -599,7 +599,7 @@ const stats = computed(() => {
   display: block;
   max-width: 520px;
   max-height: 420px;
-  background: repeating-conic-gradient(#f0f2f5 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+  background: repeating-conic-gradient(var(--border-soft) 0% 25%, var(--surface) 0% 50%) 50% / 16px 16px;
 }
 
 .swipe img.top {
@@ -612,7 +612,7 @@ const stats = computed(() => {
   top: 0;
   bottom: 0;
   width: 2px;
-  background: #1f5aa8;
+  background: var(--accent);
   pointer-events: none;
 }
 
@@ -632,7 +632,7 @@ const stats = computed(() => {
   padding: 1px 6px;
   border-radius: 8px;
   background: rgba(31, 90, 168, 0.85);
-  color: #fff;
+  color: var(--surface);
   font-size: 11px;
   pointer-events: none;
 }
@@ -668,8 +668,8 @@ const stats = computed(() => {
 .image {
   margin: 0;
   padding: 8px;
-  background: #fff;
-  border: 1px solid #e5e8ee;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
@@ -678,17 +678,17 @@ const stats = computed(() => {
   max-width: 280px;
   max-height: 220px;
   /* 图片本身可能有透明区域，棋盘底才看得出alpha */
-  background: repeating-conic-gradient(#f0f2f5 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+  background: repeating-conic-gradient(var(--border-soft) 0% 25%, var(--surface) 0% 50%) 50% / 16px 16px;
 }
 
 .image figcaption {
   font-size: 11px;
-  color: #6b7484;
+  color: var(--text-2);
   margin-bottom: 6px;
 }
 
 .muted {
-  color: #6b7484;
+  color: var(--text-2);
 }
 
 .raw-output {

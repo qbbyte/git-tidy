@@ -227,8 +227,8 @@ defineExpose({ reload: load });
   flex-direction: column;
   gap: 6px;
   padding: 6px 8px;
-  background: #fbfcfe;
-  border-top: 1px solid #eef1f5;
+  background: var(--surface-app);
+  border-top: 1px solid var(--border-soft);
 }
 
 .head {
@@ -237,20 +237,20 @@ defineExpose({ reload: load });
   justify-content: space-between;
   font-size: 11px;
   font-weight: 600;
-  color: #8a94a6;
+  color: var(--text-3);
 }
 
 .hunk {
-  border: 1px solid #e5e8ee;
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
-  background: #fff;
+  background: var(--surface);
 }
 
 .hunk-head {
   padding: 2px 6px;
-  background: #f7f8fa;
-  border-bottom: 1px solid #eef1f5;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border-soft);
   font-size: 11px;
 }
 
@@ -265,18 +265,18 @@ defineExpose({ reload: load });
 }
 
 .line.add {
-  background: #e6f6ea;
+  background: var(--ok-bg);
 }
 
 .line.delete {
-  background: #fdeceb;
+  background: var(--error-bg);
 }
 
 .no {
   flex: none;
   width: 30px;
   text-align: right;
-  color: #98a2b3;
+  color: var(--text-3);
   user-select: none;
 }
 

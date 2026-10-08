@@ -18,6 +18,7 @@ import RepoSidebar from "@/components/RepoSidebar.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { INTERRUPT_LABEL, type Interrupt } from "@/api/refs";
+import { FONT_UI, RADIUS_CONTROL, tokens } from "@/styles/tokens";
 
 /**
  * 外壳照 Fork：左栏常驻仓库与只读信息，主区用页签切「历史 / 提交」。
@@ -41,12 +42,20 @@ const INTERRUPT_EXIT: Record<Interrupt, string> = {
   revert: "解决冲突后用 git revert --continue 继续，或 --abort 放弃这次回滚",
 };
 
+/**
+ * Naive UI 的主题覆盖。
+ *
+ * **颜色全部从 `@/styles/tokens` 取**，不写字面色值：CSS 变量进不了 Naive 的
+ * 派生逻辑（hover / pressed 是它自己按 primary 算的），所以这里是唯一需要
+ * 「重复一遍」的地方——但它重复的是同一个常量，不是另一个手抄的色号。
+ */
 const themeOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: "#1F5AA8",
-    primaryColorHover: "#2C6FC4",
-    primaryColorPressed: "#1A4C8F",
-    borderRadius: "6px",
+    primaryColor: tokens.accent,
+    primaryColorHover: tokens.accentHover,
+    primaryColorPressed: tokens.accentPressed,
+    fontFamily: FONT_UI,
+    borderRadius: RADIUS_CONTROL,
   },
 };
 
@@ -182,27 +191,11 @@ function closeError() {
   </n-config-provider>
 </template>
 
-<style>
-html,
-body,
-#app {
-  height: 100%;
-  margin: 0;
-}
-
-/* 桌面外壳不该有整页滚动条：滚动只属于各个面板自己（.content 和左栏都各自 overflow）。
-   关掉它，任何一个页面板写错高度都只会缩掉自己那一块，不会把整窗拖走。 */
-html,
-body {
-  overflow: hidden;
-}
-</style>
-
 <style scoped>
 .shell {
   display: flex;
   height: 100vh;
-  background: #f5f7fa;
+  background: var(--surface-app);
 }
 
 .sider {
@@ -223,8 +216,8 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding: 8px 16px;
-  background: #fff;
-  border-bottom: 1px solid #e5e8ee;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .headline {

@@ -412,7 +412,7 @@ function shortSha(sha: string) {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #8a94a6;
+  color: var(--text-3);
   margin-top: 4px;
 }
 
@@ -434,12 +434,12 @@ function shortSha(sha: string) {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #dfe3e8;
+  background: var(--border);
   flex: none;
 }
 
 .ref-dot.on {
-  background: #1f5aa8;
+  background: var(--accent);
 }
 
 .ref-name {
@@ -459,7 +459,7 @@ function shortSha(sha: string) {
 
 .ref-track.warn,
 .unmerged {
-  color: #8a5a00;
+  color: var(--warn-text);
   opacity: 1;
 }
 
@@ -486,8 +486,8 @@ function shortSha(sha: string) {
   flex-direction: column;
   gap: 6px;
   padding: 8px;
-  background: #fff7f6;
-  border: 1px solid #f3c9c4;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
   border-radius: 6px;
   font-size: 11px;
 }

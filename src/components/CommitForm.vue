@@ -304,11 +304,11 @@ onUnmounted(() => {
 
 .counter.over {
   opacity: 1;
-  color: #d68b1f;
+  color: var(--warn-text);
 }
 
 .preview {
-  border: 1px dashed #e3e6eb;
+  border: 1px dashed var(--border);
   border-radius: 6px;
   padding: 8px 10px;
 }

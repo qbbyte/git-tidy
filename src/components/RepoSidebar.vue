@@ -296,8 +296,8 @@ watch(
      就变成 100vh + 28px，把文档撑出窗口，右侧因此多出一条整页滚动条。
      .shell 是 flex 行容器，交叉轴默认 stretch 已经把高度正好给到 100vh（含内边距） */
   overflow: auto;
-  border-right: 1px solid #e5e8ee;
-  background: #fbfcfe;
+  border-right: 1px solid var(--border);
+  background: var(--surface-app);
   font-size: 12px;
 }
 
@@ -316,7 +316,7 @@ watch(
 .brand-title {
   font-size: 15px;
   font-weight: 700;
-  color: #1f5aa8;
+  color: var(--accent);
 }
 
 .brand-sub {
@@ -329,7 +329,7 @@ watch(
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #8a94a6;
+  color: var(--text-3);
 }
 
 .repo-list {
@@ -348,11 +348,11 @@ watch(
 }
 
 .repo-row:hover {
-  background: #eef2f8;
+  background: var(--surface-hover);
 }
 
 .repo-row.active {
-  background: #e3ecf7;
+  background: var(--surface-selected);
 }
 
 .row-main {
@@ -418,7 +418,7 @@ watch(
 }
 
 .ref-dot.on {
-  background: #1f5aa8;
+  background: var(--accent);
 }
 
 .ref-name {
@@ -448,7 +448,7 @@ watch(
 
 /* 落后于远程、跟踪分支被删、有操作卡在半路——这三样都要一眼看见 */
 .warn {
-  color: #b45309;
+  color: var(--warn-text);
 }
 
 .clone-button {

@@ -163,13 +163,13 @@ function isPicked(path: string) {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #8a94a6;
+  color: var(--text-3);
 }
 
 .pick {
   max-height: 120px;
   overflow: auto;
-  border: 1px solid #eef1f5;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
   padding: 4px 6px;
   font-size: 11px;
@@ -192,7 +192,7 @@ function isPicked(path: string) {
   align-items: center;
   gap: 4px 8px;
   padding: 3px 0;
-  border-bottom: 1px solid #f4f6f8;
+  border-bottom: 1px solid var(--surface-sunken);
 }
 
 .row-main {
@@ -205,7 +205,7 @@ function isPicked(path: string) {
 
 .ref {
   flex: none;
-  color: #8a94a6;
+  color: var(--text-3);
   font-size: 11px;
 }
 
@@ -244,8 +244,8 @@ function isPicked(path: string) {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 8px;
-  background: #fdf6e7;
-  border: 1px solid #f0dcb0;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
   border-radius: 6px;
   font-size: 11px;
 }

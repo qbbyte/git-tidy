@@ -266,19 +266,19 @@ function stubOf() {
   gap: 8px;
   height: 44px;
   padding: 0 12px;
-  border-bottom: 1px solid #f0f2f5;
+  border-bottom: 1px solid var(--border-soft);
   font-size: 13px;
   cursor: pointer;
 }
 
 /* 选中态是"右边那一栏正在显示它"，不是焦点态：颜色要够淡，一屏几十行同时亮着不能刺眼 */
 .commit-row:hover {
-  background: #f2f6fb;
+  background: var(--surface-hover);
 }
 
 .commit-row.selected {
-  background: #e6effa;
-  box-shadow: inset 2px 0 0 #1f5aa8;
+  background: var(--surface-selected);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .graph {
@@ -288,7 +288,7 @@ function stubOf() {
 
 .sha {
   flex: none;
-  color: #8a94a6;
+  color: var(--text-3);
   font-size: 12px;
 }
 
@@ -321,24 +321,24 @@ function stubOf() {
 }
 
 .badge.branch {
-  color: #1b6ba8;
-  background: #e2f0fa;
+  color: var(--badge-branch-text);
+  background: var(--badge-branch-bg);
 }
 
 .badge.remote {
-  color: #5a6472;
-  background: #edf0f4;
+  color: var(--badge-remote-text);
+  background: var(--badge-remote-bg);
 }
 
 .badge.tag {
-  color: #8a5a00;
-  background: #fdf1d8;
+  color: var(--badge-tag-text);
+  background: var(--badge-tag-bg);
 }
 
 /* 游离 HEAD 用的那一个：它不是任何一种引用，所以不复用上面三色 */
 .badge.current {
-  color: #6d3bb5;
-  background: #f1e9fb;
+  color: var(--badge-head-text);
+  background: var(--badge-head-bg);
 }
 
 /* HEAD 所在的那个引用要一眼看出来，不然一条线上几个徽标得分开数 */
@@ -348,8 +348,8 @@ function stubOf() {
 }
 
 .badge.more {
-  color: #6b7484;
-  background: #f0f2f5;
+  color: var(--badge-more-text);
+  background: var(--badge-more-bg);
 }
 
 .subject {

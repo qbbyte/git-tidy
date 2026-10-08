@@ -135,7 +135,7 @@ function execOf(entry: TreeEntry) {
 .dir {
   padding-top: 6px;
   font-weight: 600;
-  color: #4a5568;
+  color: var(--text-2);
 }
 
 .file {
@@ -148,11 +148,11 @@ function execOf(entry: TreeEntry) {
 }
 
 .file:hover {
-  background: #f2f6fb;
+  background: var(--surface-hover);
 }
 
 .file.picked {
-  background: #e6effa;
+  background: var(--surface-selected);
 }
 
 /* 子模块指针只有一行指针，没有正文可看——点它只能看到"这是个子模块" */
@@ -168,7 +168,7 @@ function execOf(entry: TreeEntry) {
 
 .flag {
   flex: none;
-  color: #8a5a00;
+  color: var(--warn-text);
   font-size: 10px;
 }
 

@@ -328,7 +328,7 @@ watch(
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #8a94a6;
+  color: var(--text-3);
 }
 
 .meta {
@@ -342,8 +342,8 @@ watch(
   flex: none;
   padding: 0 4px;
   border-radius: 4px;
-  background: #fdf0e6;
-  color: #b8622a;
+  background: var(--warn-bg);
+  color: var(--warn-text);
 }
 
 .other {
@@ -367,9 +367,9 @@ watch(
 .side-body {
   margin: 0;
   padding: 4px 6px;
-  border: 1px solid #eef1f5;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #fafbfc;
+  background: var(--surface-sunken);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
@@ -387,7 +387,7 @@ watch(
 }
 
 .hunk {
-  border: 1px solid #eef1f5;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
   padding: 4px 6px;
 }
@@ -409,7 +409,7 @@ watch(
 
 /* 对方那栏换个底色：并排两栏同色时容易看错行对应关系 */
 .side-body.alt {
-  background: #f0f6ff;
+  background: var(--surface-alt);
 }
 
 .hunk-actions {
