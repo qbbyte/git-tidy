@@ -76,7 +76,7 @@ function short(sha: string | null) {
   <div class="journal">
     <div class="head toggle" :class="{ collapsed }" @click="collapsed = !collapsed">
       <span class="chevron" aria-hidden="true" />
-      <span>写操作 {{ writes.journal.length }}</span>
+      <span class="title">写操作 {{ writes.journal.length }}</span>
       <n-popconfirm
         :disabled="!writes.canUndo || writes.busy"
         positive-text="撤销"
@@ -147,9 +147,13 @@ function short(sha: string | null) {
   color: var(--text-3);
 }
 
-/* 撤销按钮要推到右边；其余文字聚在左边 */
-.head > span:first-of-type {
+/* 撤销按钮要推到右边，标题占满中间；chevron 保持 8×8 三角不被拉伸 */
+.head .title {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 可折叠的表头。点击区给满整行 */

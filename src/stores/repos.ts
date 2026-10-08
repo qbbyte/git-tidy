@@ -36,6 +36,11 @@ export const useReposStore = defineStore("repos", () => {
   /** 仓库级状态摘要：当前分支、跟踪与 ahead/behind、中断态（§7.1） */
   const repoState = ref<RepoState | null>(null);
   const loading = ref(false);
+  /**
+   * 正在切换仓库。切换期间界面还挂着上一个仓库的快照（不清空以免整栏塌一下），
+   * 所以此刻要把它置灰、并把写入口全关掉——否则会拿旧仓库的数据去操作新仓库。
+   */
+  const switching = ref(false);
   /** 暂存/取消暂存单独一个开关：它只该锁住勾选区，不该让侧栏的按钮一起变灰 */
   const staging = ref(false);
   const error = ref<GitTidyError | null>(null);
@@ -120,19 +125,40 @@ export const useReposStore = defineStore("repos", () => {
     const updated = await withProgress(repo?.remoteUrl ?? "", () => materializeRepo(id));
     if (!updated) return;
     await load();
-    if (currentId.value === id) await select(id);
+    // 补齐后同一个 id 也得重读：kind 从只读变成了 worktree，待提交文件这时才读得到
+    if (currentId.value === id) await select(id, true);
   }
 
-  async function select(id: number) {
+  /**
+   * 打开一个仓库。
+   *
+   * `force` 用于「已经打开、但外部状态变了」的场景（如克隆补齐后同一个 id 要重读）。
+   *
+   * 这里最容易踩的坑是清空时机：若在 `await` 之前就 `clearOpened()`，`info` 会先变 null，
+   * 于是钉住区与引用/stash 面板（都 `v-if` 在 `info` 上）会整块卸载，等数据回来再挂载——
+   * 用户看到的就是「往下滑一下、整栏重新加载」。所以清空要挪到取数之后，与赋值同一个 tick：
+   * Vue 批量 patch 只跑一次，`info` 从「旧值」直接到「新值」，中间不会被观察到 null。
+   */
+  async function select(id: number, force = false) {
+    // 点的是当前已打开、数据也在的仓库：什么都不用做，否则每点一次整栏就重建一遍
+    if (!force && id === currentId.value && info.value !== null) return;
+
+    switching.value = true;
     currentId.value = id;
-    // 先清空：读回来之前如果还挂着上一个仓库的文件列表，界面就会拿它去操作错的仓库
-    clearOpened();
-    const fetched = await run(() => refreshRepo(id));
-    // 取回来的可能已经是另一个仓库的了（用户又点了一次），比对后再写
-    if (!fetched || currentId.value !== id) return;
-    info.value = fetched;
-    await refreshRefs();
-    await refreshStatus();
+    try {
+      const fetched = await run(() => refreshRepo(id));
+      // 取回来的可能已经是另一个仓库的了（用户又点了一次），比对后再写
+      if (!fetched || currentId.value !== id) return;
+      // 清空与赋值同一个 tick，界面不会经过「info 为空」的中间态
+      clearOpened();
+      info.value = fetched;
+      await refreshRefs();
+      await refreshStatus();
+    } finally {
+      // 只有「当前打开的就是我这次要开的仓库」时才收尾。
+      // 连续快点两次时，先发起的那次会在这里被后一次顶掉，不能替它把 switching 关掉
+      if (currentId.value === id) switching.value = false;
+    }
   }
 
   /**
@@ -234,6 +260,7 @@ export const useReposStore = defineStore("repos", () => {
     interrupt,
     interrupted,
     loading,
+    switching,
     staging,
     error,
     progress,

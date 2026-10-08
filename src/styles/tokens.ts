@@ -83,6 +83,27 @@ export const tokens = {
    * 「改名」不是错误也不是警告，硬套其中任何一色都会让人误读成出问题。
    */
   statusRenameBg: "#6f7ee0",
+
+  // ---- 文件类型记号。文件树里每行文件前面那个标记的取色
+  //
+  // 记号分两种，**一族一个、互不重样**：`JS`/`TS`/`RS` 是彩色字母（这三族字母本身
+  // 就把类型说清了），其余是矢量图形（`.vue` 的 V、`.html` 的 `<>`、`.json` 的 `{}`、
+  // `.css` 的 `#`、脚本的 `>_`、图片的相框、文档的一页纸）。不引图标库——
+  // 少一个依赖、少一份装不上的风险。
+  //
+  // 取色按 WCAG 小字标准算过（字母记号是 9px 粗体，算小字，要 4.5:1）：三张底都量过——
+  // 行底 `#ffffff`、hover `#f5f5f7`、选中 `#e5f0ff`（最深的一档，是最严的）——最差的也有 4.57:1。
+  // 顺便按色相排开（最近的一对差 25°），免得两个类型看着像同一个。
+  fileJs: "#8f6400",
+  fileTs: "#2e6db9",
+  fileVue: "#2b7952",
+  fileRust: "#a0401c",
+  fileShell: "#0f766e",
+  fileStyle: "#a21caf",
+  fileMarkup: "#b0365b",
+  fileData: "#5a6472",
+  fileDoc: "#676f54",
+  fileImage: "#7c3aed",
 } as const;
 
 export type TokenName = keyof typeof tokens;

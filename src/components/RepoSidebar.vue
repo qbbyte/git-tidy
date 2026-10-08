@@ -221,7 +221,7 @@ watch(
       而那个流里有仓库列表、引用列表、stash、写操作日志，一屏装不下，
       于是「我现在在哪个分支」要靠向上滚才能找到。
     -->
-    <div v-if="repos.info" class="pinned">
+    <div v-if="repos.info" class="pinned" :class="{ switching: repos.switching }">
       <div class="pinned-title">{{ repos.current?.name }}</div>
 
       <!-- 分支与跟踪合成一行：它们本来就是一个事实的两半，分两行反而难对 -->
@@ -429,6 +429,9 @@ watch(
   gap: 14px;
   flex: 1;
   min-height: 0;
+  /* 表头 .head.toggle 用负 margin 让 hover 底色出血到文字边缘，会向右探出约 4px；
+     只裁横向、保留纵向滚动，否则底部会多出一条横向滚动条 */
+  overflow-x: hidden;
   overflow-y: auto;
   padding-right: 2px;
 }
@@ -450,6 +453,15 @@ watch(
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
+}
+
+/*
+ * 切换仓库期间：内容还是上一个仓库的快照，置灰 + 挡住交互。
+ * 这样整块留在原地（不清空、不塌），只是变灰，不会闪一下。
+ */
+.pinned.switching {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .pinned-title {

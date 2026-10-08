@@ -75,15 +75,18 @@ export const useWriteStore = defineStore("write", () => {
   /** 删分支前查到的"会丢多少" */
   const deletable = shallowRef<Record<string, Deletable>>({});
 
-  /** 中断态下能做的事只有一件：退回（§3 的 M2 边界） */
-  const canWrite = computed(() => repos.canCommit && !repos.interrupted);
+  /**
+   * 中断态下能做的事只有一件：退回（§3 的 M2 边界）。
+   * 切换仓库期间也全关：此刻界面挂的还是上一个仓库的快照，动了就会操作错仓库。
+   */
+  const canWrite = computed(() => repos.canCommit && !repos.interrupted && !repos.switching);
 
   /** 有没有没解决的冲突。界面据此把「续跑」以外的写入口全禁掉 */
   const hasConflicts = computed(() => conflicts.value.length > 0);
 
-  /** 有没有可撤销的写操作：最后一条必须是成功的 */
+  /** 有没有可撤销的写操作：最后一条必须是成功的。切换仓库期间同样关掉 */
   const canUndo = computed(
-    () => journal.value.length > 0 && journal.value[0].status === "ok",
+    () => !repos.switching && journal.value.length > 0 && journal.value[0].status === "ok",
   );
 
   async function run<T>(task: () => Promise<T>): Promise<T | null> {
