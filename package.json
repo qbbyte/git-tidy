@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "check:conflict": "node --experimental-strip-types scripts/check-conflict.mjs",
+    "check:conflict-real": "powershell -ExecutionPolicy Bypass -File scripts/verify-conflict.ps1",
     "preview": "vite preview",
     "tauri": "tauri"
   },

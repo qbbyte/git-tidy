@@ -2,13 +2,20 @@
 
 Tidy your commit history
 
-把不符合规范的提交整理成符合 Conventional Commits 的 Git 历史。核心能力是批量治理一段连续区间内的提交（squash / reword）、生成 CHANGELOG，并给出仓库的规范符合率报告。
+把不符合规范的提交整理成符合 Conventional Commits 的 Git 历史。核心能力是批量治理一段连续区间内的提交（squash / reword）、生成 CHANGELOG，并给出仓库的规范符合率报告；通用客户端那部分（历史、图、详情、diff、blame、文件树、筛选）是它的放大器。
 
 历史改写只支持从 HEAD 往回的连续区间，执行前写入还原点、执行后校验 tree 一致，随时可回退。
 
 ## 当前状态
 
-工程骨架已通，端到端只打通了 `repo_probe` 一条切片（探测工作区、git 目录、当前分支、HEAD 提交与脏状态）。批量治理、CHANGELOG 生成、符合率报告都还没开始实现。
+按需求文档的 M1–M5 分期：
+
+- **M1 读透历史（完）**：注册表与只读浏览、提交历史 + 提交图泳道、ref 可见性与中断态、commit 详情、文件级 diff（含图片三种画法）、blame / 文件历史 / 跨修订文件树、筛选与搜索（筛选态重跑图计算）。
+- **M2 写索引与工作区（完）**：所有写命令经 `write_guard` 的六步——逐行/hunk 暂存、stash、分支与标签、cherry-pick / revert / reset、fetch / pull / push，外加还原点、写操作日志与「撤销上一步」。
+- **M3 危险面（做了一半）**：冲突解决器（六类冲突的逐块取舍与降级视图）已落地；交互式改写、reflog 恢复、GPG / LFS / Git Flow 还没有。
+- **M4 治理闭环 / M5 外壳与交付**：未开始。规范配置三层与提交表单已就位，批量治理、符合率报告、CHANGELOG、打包与 CI 都还没有。
+
+下一步是 M3 的交互式改写（自驱临时分支 + tree 校验 + 回滚），它是需求文档里标注的最大工程点。
 
 ## 技术栈
 
@@ -31,6 +38,8 @@ Tidy your commit history
 npm install
 npm run tauri dev      # 启动桌面窗口
 npm run build          # vue-tsc 类型检查 + 前端构建
+npm run check:conflict         # 冲突标记解析器的边界用例
+npm run check:conflict-real    # 拿真 git 造出的冲突草稿跑一遍解析器
 cd src-tauri && cargo test && cargo clippy
 ```
 
