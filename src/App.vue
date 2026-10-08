@@ -7,6 +7,7 @@ import {
   NConfigProvider,
   NMessageProvider,
   NProgress,
+  NSpace,
   NTab,
   NTabs,
   dateZhCN,
@@ -15,6 +16,7 @@ import {
 } from "naive-ui";
 import RepoSidebar from "@/components/RepoSidebar.vue";
 import { useReposStore } from "@/stores/repos";
+import { useWriteStore } from "@/stores/write";
 import { INTERRUPT_LABEL, type Interrupt } from "@/api/refs";
 
 /**
@@ -24,6 +26,7 @@ import { INTERRUPT_LABEL, type Interrupt } from "@/api/refs";
 const route = useRoute();
 const router = useRouter();
 const repos = useReposStore();
+const writes = useWriteStore();
 
 /**
  * 每种中断态的出口。这一批只给文字指引，等 M2/M3 有「继续 / 中止」按钮再换成按钮。
@@ -47,7 +50,11 @@ const themeOverrides: GlobalThemeOverrides = {
   },
 };
 
-const activeTab = computed(() => (route.name === "commit" ? "commit" : "history"));
+const activeTab = computed(() => {
+  if (route.name === "commit") return "commit";
+  if (route.name === "files") return "files";
+  return "history";
+});
 /** 只读浏览仓库没有索引，提交页整个不给进（Rust 侧同样会拒，这里只是不摆出能点的按钮） */
 const commitTabEnabled = computed(() => repos.canCommit);
 
@@ -93,6 +100,8 @@ function closeError() {
             <span class="headline" :title="headline">{{ headline }}</span>
             <n-tabs type="line" size="small" :value="activeTab" @update:value="go">
               <n-tab name="history">历史</n-tab>
+              <!-- 文件页只读浏览，不碰工作区，所以 browse 仓库也摆出来 -->
+              <n-tab name="files">文件</n-tab>
               <n-tab name="commit" :disabled="!commitTabEnabled">提交</n-tab>
             </n-tabs>
           </header>
@@ -106,15 +115,26 @@ function closeError() {
             :closable="false"
           >
             <div>{{ interruptExit }}</div>
-            <div class="muted">完成或中止之前，工具的提交与写操作会被拒绝。</div>
-            <n-button
-              size="tiny"
-              class="recheck"
-              :loading="repos.loading"
-              @click="repos.refreshAll()"
-            >
-              已在终端处理完，重读一次
-            </n-button>
+            <div class="muted">
+              M2 不提供逐块取舍：冲突要么一键退回，要么在终端里处理完再回来。
+            </div>
+            <n-space size="small" class="recheck">
+              <n-button
+                size="tiny"
+                type="warning"
+                :loading="writes.busy"
+                @click="writes.abort()"
+              >
+                一键退回
+              </n-button>
+              <n-button
+                size="tiny"
+                :loading="repos.loading"
+                @click="repos.refreshAll()"
+              >
+                已在终端处理完，重读一次
+              </n-button>
+            </n-space>
           </n-alert>
 
           <div v-if="repos.progress" class="banner">

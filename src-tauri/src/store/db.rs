@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use crate::error::GitError;
 
 /// 每加一张表就把这个数加一，并在 migrate 里补一条对应的建表语句。
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE repos (
@@ -18,6 +18,30 @@ CREATE TABLE repos (
     remote_url TEXT,
     added_at   INTEGER NOT NULL
 );
+";
+
+/// 写操作日志（§7.17 / 第四节 write_guard 第 2、6 步）。
+///
+/// `status` 三值与界面上的三种结局一一对应：`ok` 成功、`rolled_back` 失败已回滚、
+/// `interrupted` 半完成序列（冲突一类，要靠 M3 的解决器收尾，M2 只给一键退回）。
+///
+/// `head_before/head_after` 是"撤销上一步"的判据：当前 HEAD 不等于 `head_after`
+/// 就说明中间有人动过，这时拒绝自动撤销（§7.17 的验收）。
+const SCHEMA_V2: &str = "
+CREATE TABLE write_op (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_id      INTEGER NOT NULL,
+    ts           INTEGER NOT NULL,
+    action       TEXT    NOT NULL,
+    affected_from TEXT,
+    affected_to   TEXT,
+    backup_ref   TEXT    NOT NULL,
+    head_before  TEXT,
+    head_after   TEXT,
+    status       TEXT    NOT NULL CHECK (status IN ('ok', 'rolled_back', 'interrupted')),
+    detail       TEXT
+);
+CREATE INDEX write_op_repo_ts ON write_op (repo_id, ts DESC);
 ";
 
 /// 本地索引库，全应用一个连接。仓库注册表、缓存、治理操作日志都在这一个文件里。
@@ -80,6 +104,9 @@ fn migrate(conn: &Connection) -> Result<(), GitError> {
     if version < 1 {
         conn.execute_batch(SCHEMA_V1).map_err(sqlite_failure)?;
     }
+    if version < 2 {
+        conn.execute_batch(SCHEMA_V2).map_err(sqlite_failure)?;
+    }
     if version != SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)
             .map_err(sqlite_failure)?;
@@ -87,7 +114,9 @@ fn migrate(conn: &Connection) -> Result<(), GitError> {
     Ok(())
 }
 
-fn sqlite_failure(err: rusqlite::Error) -> GitError {
+/// 建表、查询的失败统一走这一条。写成 `pub(crate)` 是为了写操作日志（`write/journal.rs`）
+/// 能用同一套错误映射，不必在两个地方各写一个 rusqlite 错误到 GitError 的映射。
+pub(crate) fn sqlite_failure(err: rusqlite::Error) -> GitError {
     GitError::Internal(format!("索引库读写失败：{err}"))
 }
 

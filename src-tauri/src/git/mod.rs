@@ -1,4 +1,5 @@
-pub mod blame;
+﻿pub mod blame;
+pub mod branch;
 pub mod clone;
 pub mod commit;
 pub mod detail;
@@ -9,5 +10,8 @@ pub mod message;
 pub mod process;
 pub mod refs;
 pub mod repo;
+pub mod reset;
+pub mod stash;
 pub mod status;
+pub mod sync;
 pub mod tree;

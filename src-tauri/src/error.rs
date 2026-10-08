@@ -28,6 +28,28 @@ pub enum GitError {
     OperationInProgress {
         state: crate::git::refs::Interrupt,
     },
+    /// 前置校验不通过：工作区脏、中断态之外的状态不满足写命令的要求。
+    /// `detail` 说明是哪一条，用户照着就能改，不用猜。
+    NotClean { detail: String },
+    /// HEAD 与界面加载时不一致（§4 的乐观并发）。IDE 或另一个终端正在写同一个仓库时会发生。
+    /// 两个值都带出去：界面上能直接告诉用户"现在是哪个提交，你的界面还停在哪个"。
+    HeadMoved { expected: String, actual: String },
+    /// 结果校验失败：改写类操作执行完 tree 与执行前不一致（§4 步骤 4）。
+    /// 此时已经回滚，这条错误说的是"为什么回滚"，不是"git 报了什么"。
+    VerificationFailed { detail: String },
+    /// 没有可撤销的写操作（这个仓库没写过，或最后一条不是成功的）。这不是崩溃，是答案。
+    NothingToUndo,
+    /// `index.lock` 存在：另一个进程正在写索引（§6.13）。**绝不**清掉那个锁文件，
+    /// 重试两次仍占用就报这个，让用户去关掉那个进程。
+    RepoBusy,
+    /// 认证失败。凭据交给系统 git / GCM / ssh-agent（§6.14），所以文案必须可执行：
+    /// "在终端跑一次 git push 完成登录，或在 Git Credential Manager 弹窗里授权"。
+    AuthRequired { detail: String },
+    /// 逐行/分块暂存时补丁不适用。`--check` 预验不过就是它，绝不半途写入索引。
+    PatchApplyFailed { detail: String },
+    /// 本地与远程已经分叉，快进拉取停住；或者 `--force-with-lease` 被拒。
+    /// `detail` 说明接下来该做什么（先 fetch、还是决定合并/变基）。
+    Diverged { detail: String },
     /// git 输出与预期的记录结构不符：分隔符数量对不上、时间戳位置落进非数字。
     /// 只把截断后的原文片段放进 detail，用户看到的是通用文案。
     ParseFailure { snippet: String },
@@ -47,6 +69,14 @@ impl GitError {
             Self::NotConformant { .. } => "message_not_conformant",
             Self::NothingStaged => "nothing_staged",
             Self::OperationInProgress { .. } => "operation_in_progress",
+            Self::NotClean { .. } => "not_clean",
+            Self::HeadMoved { .. } => "head_moved",
+            Self::VerificationFailed { .. } => "verification_failed",
+            Self::NothingToUndo => "nothing_to_undo",
+            Self::RepoBusy => "repo_busy",
+            Self::AuthRequired { .. } => "auth_required",
+            Self::PatchApplyFailed { .. } => "patch_apply_failed",
+            Self::Diverged { .. } => "diverged",
             Self::ParseFailure { .. } => "parse_failure",
             Self::Internal(_) => "internal",
         }
@@ -86,6 +116,27 @@ impl GitError {
                 let label = state.label();
                 format!("{label}：请先完成或中止这次操作，再使用工具的提交")
             }
+            Self::NotClean { detail } => format!("工作区不满足这次操作的要求：{detail}"),
+            Self::HeadMoved { expected, actual } => format!(
+                "仓库已经被别处改动（现在在 {short_actual}，操作界面停在 {short_expected}），已拒绝执行",
+                short_actual = short(actual),
+                short_expected = short(expected)
+            ),
+            Self::VerificationFailed { detail } => {
+                format!("操作结果校验不通过，已回滚：{detail}")
+            }
+            Self::NothingToUndo => "没有可撤销的上一步写操作".into(),
+            Self::RepoBusy => {
+                "另一个进程正在写这个仓库的索引（存在 index.lock）。请先关掉它再试，重试不会清掉那个锁"
+                    .into()
+            }
+            Self::AuthRequired { detail } => format!(
+                "需要认证。请在终端里跑一次 git push / git pull 完成登录，或在 Git Credential Manager 弹窗里授权（详情：{detail}）"
+            ),
+            Self::PatchApplyFailed { detail } => format!(
+                "选中的改动没法按补丁暂存，索引没有被动过：{detail}"
+            ),
+            Self::Diverged { detail } => format!("与远程已经分叉：{detail}"),
             Self::Internal(_) => "工具内部错误，请重试".into(),
         }
     }
@@ -101,6 +152,11 @@ impl GitError {
                     .collect::<Vec<_>>()
                     .join("\n"),
             ),
+            Self::NotClean { detail } => Some(detail.clone()),
+            Self::VerificationFailed { detail } => Some(detail.clone()),
+            Self::AuthRequired { detail } => Some(detail.clone()),
+            Self::PatchApplyFailed { detail } => Some(detail.clone()),
+            Self::Diverged { detail } => Some(detail.clone()),
             Self::Internal(msg) => Some(msg.clone()),
             _ => None,
         }
@@ -117,6 +173,11 @@ impl fmt::Debug for GitError {
         }
         Ok(())
     }
+}
+
+/// 提交号在错误文案里只给前 8 位：两个 40 位串并排排出来没人读得下去
+fn short(sha: &str) -> String {
+    sha.chars().take(8).collect()
 }
 
 impl From<std::io::Error> for GitError {

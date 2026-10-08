@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { NButton, NEmpty, NInput, NSpace, NTag } from "naive-ui";
+import RefPanel from "@/components/RefPanel.vue";
+import StashPanel from "@/components/StashPanel.vue";
+import OpJournal from "@/components/OpJournal.vue";
 import { useReposStore } from "@/stores/repos";
-import { INTERRUPT_LABEL, type Ref } from "@/api/refs";
+import { useWriteStore } from "@/stores/write";
+import { INTERRUPT_LABEL } from "@/api/refs";
 import type { Repo } from "@/api/repo";
 
 /**
@@ -11,6 +15,7 @@ import type { Repo } from "@/api/repo";
  * 主区的历史页和提交页都靠这里切仓库，所以它不随页签卸载。
  */
 const repos = useReposStore();
+const writes = useWriteStore();
 
 const path = ref("");
 const url = ref("");
@@ -58,25 +63,9 @@ const interruptText = computed(() =>
 );
 
 /**
- * 本仓库的全部引用。这里只读不写：切换分支会动 HEAD 和工作区，按第五节第 17 条
- * 要等 `write_guard` 的还原点先落地（§7.10 的写半边），所以列表上不给点击入口。
+ * 本仓库的引用列表与它们的写入口都在 `RefPanel` 里：读的那一列常驻几十条，
+ * 写入口悬停才露出来（§7.10 的确认强度与 §3 的期边界）。
  */
-const localBranches = computed(() => repos.refs.filter((item) => item.kind === "branch"));
-const remoteBranches = computed(() => repos.refs.filter((item) => item.kind === "remote"));
-const tagRefs = computed(() => repos.refs.filter((item) => item.kind === "tag"));
-
-const currentBranch = computed(() => repos.repoState?.branch ?? repos.info?.branch ?? null);
-
-/** 远程分支和标签默认收起：一个仓库几百个远程跟踪分支是常态，侧栏不该被它们挤没 */
-const showRemote = ref(false);
-const showTags = ref(false);
-
-/** 与上方"跟踪"那一行同一套说法：git 没给数字时是"已同步"，不是 0/0 */
-function trackOf(item: Ref) {
-  if (item.upstreamGone) return "远程已删";
-  if (item.ahead === null && item.behind === null) return item.upstream ? "已同步" : "";
-  return `↑${item.ahead ?? 0} ↓${item.behind ?? 0}`;
-}
 
 async function addPath() {
   const trimmed = path.value.trim();
@@ -130,9 +119,21 @@ function kindTag(repo: Repo) {
     : { text: "只读", type: "info" as const };
 }
 
-onMounted(() => {
-  if (repos.repos.length === 0) repos.load();
+onMounted(async () => {
+  if (repos.repos.length === 0) await repos.load();
+  // 远程命令的进度行可能在 promise 落地前就到了，所以订阅必须先于任何远程动作（§6.7）
+  writes.watchProgress();
+  if (repos.currentId !== null) await writes.loadAll();
 });
+
+/** 换仓库时 stash、日志、还原点都要跟着换：它们都是按仓库存的 */
+watch(
+  () => repos.currentId,
+  async (id) => {
+    writes.clearForRepo();
+    if (id !== null) await writes.loadAll();
+  },
+);
 </script>
 
 <template>
@@ -262,45 +263,18 @@ onMounted(() => {
     </div>
 
     <!--
-      全部引用读自 §7.3 那一次 for-each-ref，不另起进程。只列不切：
-      切换分支要动 HEAD 和工作区，等批 6 的还原点（write_guard）落地后按 §7.10 给。
+      引用列表读自 §7.3 那一次 for-each-ref，不另起进程。
+      **写**操作拆到 RefPanel：读的这一列常驻摆几十个分支，写入口悬停才露出来，
+      而且每一个都要自己的确认（§7.10）。
     -->
-    <div v-if="localBranches.length || remoteBranches.length || tagRefs.length" class="block">
-      <div class="block-title">分支 {{ localBranches.length }}</div>
-      <div class="ref-list">
-        <div
-          v-for="item in localBranches"
-          :key="item.fullName"
-          class="ref-row"
-          :class="{ current: item.name === currentBranch }"
-        >
-          <span class="ref-dot" :class="{ on: item.name === currentBranch }"></span>
-          <span class="ref-name" :title="item.fullName">{{ item.name }}</span>
-          <span class="ref-track" :class="{ warn: item.upstreamGone }">{{ trackOf(item) }}</span>
-        </div>
-      </div>
+    <ref-panel v-if="repos.canCommit" />
 
-      <template v-if="remoteBranches.length">
-        <n-button size="tiny" quaternary @click="showRemote = !showRemote">
-          远程分支 {{ remoteBranches.length }} {{ showRemote ? "▾" : "▸" }}
-        </n-button>
-        <div v-if="showRemote" class="ref-list">
-          <div v-for="item in remoteBranches" :key="item.fullName" class="ref-row">
-            <span class="ref-name" :title="item.fullName">{{ item.name }}</span>
-          </div>
-        </div>
-      </template>
+    <div v-if="repos.canCommit" class="block">
+      <stash-panel />
+    </div>
 
-      <template v-if="tagRefs.length">
-        <n-button size="tiny" quaternary @click="showTags = !showTags">
-          标签 {{ tagRefs.length }} {{ showTags ? "▾" : "▸" }}
-        </n-button>
-        <div v-if="showTags" class="ref-list">
-          <div v-for="item in tagRefs" :key="item.fullName" class="ref-row">
-            <span class="ref-name" :title="item.fullName">{{ item.name }}</span>
-          </div>
-        </div>
-      </template>
+    <div v-if="repos.currentId !== null" class="block">
+      <op-journal />
     </div>
   </aside>
 </template>

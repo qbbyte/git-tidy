@@ -8,6 +8,25 @@ use crate::git::diff;
 use crate::store::db::{query, Db};
 use crate::store::repos;
 
+/// 工作区里某个文件的未暂存改动（索引 → 工作区）。逐行暂存的界面靠它（§7.8）。
+///
+/// 只读浏览仓库没有工作区，这条命令对它天然不可用。
+#[tauri::command]
+pub async fn worktree_file_diff(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    path: String,
+    ignore_white_space: bool,
+) -> Result<diff::Diff, GitError> {
+    let repo_path = query(state.inner().clone(), move |conn| repos::ensure_worktree(conn, id)).await?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        diff::read_worktree(&repo_path, &path, ignore_white_space)
+    })
+    .await
+    .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
 /// 单个文件的差异（§7.5）。一次点一个文件：整条提交所有文件的 diff 一起回，
 /// 大提交第一次点开就要传几十 MB，而人一次只看一个文件。
 ///

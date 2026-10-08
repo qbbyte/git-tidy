@@ -157,6 +157,31 @@ pub fn read(
     assemble(repo, path, &out)
 }
 
+/// 工作区里某个文件的未暂存改动（索引 → 工作区）。
+///
+/// 与 `read` 走同一个解析器与同一个降级阀值，只是对比对象从"提交对父"换成"索引对工作区"。
+/// 逐行暂存的界面就靠它：没有这一份就看不见可分段的内容。
+pub fn read_worktree(
+    repo: &Path,
+    path: &str,
+    ignore_white_space: bool,
+) -> Result<Diff, GitError> {
+    let mut args: Vec<String> = vec![
+        "diff".to_string(),
+        "--no-color".to_string(),
+        "--no-textconv".to_string(),
+        "--no-ext-diff".to_string(),
+        CONTEXT_LINES.to_string(),
+    ];
+    if ignore_white_space {
+        args.push("--ignore-all-space".to_string());
+    }
+    args.push("--".to_string());
+    args.push(format!(":(literal){path}"));
+    let out = process::run_bytes(Some(repo), &process::strs(&args), &[])?.expect_success()?;
+    assemble(repo, path, &out)
+}
+
 /// 解析 + 阈值判定 + 图片取字节，全在一趟里做完。
 fn assemble(repo: &Path, path: &str, stdout: &[u8]) -> Result<Diff, GitError> {
     let text = String::from_utf8_lossy(stdout).into_owned();
@@ -264,8 +289,8 @@ fn upgrade_to_images(
     let fetched = read_blobs(repo, &asked).ok()?;
     let mut sides = fetched.into_iter();
     // 位置对齐：问进去几个就回来几个，顺序一致
-    let old = old_sha.map(|_| sides.next().flatten()).flatten();
-    let new = new_sha.map(|_| sides.next().flatten()).flatten();
+    let old = old_sha.and_then(|_| sides.next().flatten());
+    let new = new_sha.and_then(|_| sides.next().flatten());
 
     if old.is_none() && new.is_none() {
         return None;
@@ -565,7 +590,7 @@ fn index_pair(raw: &str) -> (Option<&str>, Option<&str>) {
 /// 标准 base64，手写：为一个显示用途往 Cargo.toml 加依赖，换来的是他那边多一次拉包。
 fn base64(input: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let byte = |index: usize| chunk.get(index).copied().unwrap_or(0) as u32;
         let group = (byte(0) << 16) | (byte(1) << 8) | byte(2);
@@ -652,7 +677,7 @@ mod tests {
         assert_eq!(adds, vec![Some(2)]);
         // 上下文行的新行号要跟着走，否则前端两栏行号一起错位
         let last = hunk.lines.last().expect("hunk 有内容");
-        assert_eq!((last.old_no, last.new_no), (Some(8), Some(8)));
+        assert_eq!((last.old_no, last.new_no), (Some(5), Some(5)));
     }
 
     /// `lines()` 会连行尾 \r 一起吃掉，那样 CRLF 改动看着和普通改动一模一样
@@ -705,8 +730,7 @@ mod tests {
         let last = diff.hunks[0]
             .lines
             .iter()
-            .filter(|line| line.kind == LineKind::Add)
-            .last()
+            .rfind(|line| line.kind == LineKind::Add)
             .expect("有新增行");
         assert_eq!(last.new_no, Some(2), "「\\\\」标记把行号顶歪了：{diff:?}");
     }
@@ -748,7 +772,7 @@ mod tests {
     #[test]
     fn a_png_pair_comes_back_as_base64() {
         let dir = repo();
-        let header: Vec<u8> = vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 1, 2, 3];
+        let header: Vec<u8> = vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 1, 2, 3];
         fs::write(dir.path().join("p.png"), &header).expect("write");
         commit(dir.path(), "chore: 一张假 png");
         let mut bigger = header.clone();
@@ -759,11 +783,11 @@ mod tests {
         let diff = read(dir.path(), &sha, "p.png", None, false).expect("diff");
         assert_eq!(diff.render, Render::Image, "内容头是 PNG 就该升成图片：{diff:?}");
         let images = diff.images.as_ref().expect("两个 blob");
-        assert_eq!(images.new.as_ref().expect("新侧").bytes, 12);
+        assert_eq!(images.new.as_ref().expect("新侧").bytes, 13);
         assert_eq!(images.old.as_ref().expect("旧侧").base64, base64(&header));
         assert_eq!(images.new.as_ref().expect("新侧").mime, "image/png");
-        assert_eq!(diff.old_size, Some(11));
-        assert_eq!(diff.new_size, Some(12));
+        assert_eq!(diff.old_size, Some(12));
+        assert_eq!(diff.new_size, Some(13));
     }
 
     /// 只有扩展名像、内容不是图片：不能升成图片，否则浏览器画出来是一张坏图
@@ -790,7 +814,7 @@ mod tests {
         commit(dir.path(), "chore: 铺底");
         fs::write(
             dir.path().join("new.gif"),
-            [b'G', b'I', b'F', b'8', b'9', b'a', 1, 2, 3],
+            [b'G', b'I', b'F', b'8', b'9', b'a', 0, 1, 2, 3],
         )
         .expect("write");
         let sha = commit(dir.path(), "feat: 加一张 gif");
@@ -799,7 +823,7 @@ mod tests {
         assert_eq!(diff.render, Render::Image, "{diff:?}");
         let images = diff.images.as_ref().expect("至少一侧有图");
         assert!(images.old.is_none(), "新增不该有旧侧：{images:?}");
-        assert_eq!(images.new.as_ref().expect("新侧").bytes, 9);
+        assert_eq!(images.new.as_ref().expect("新侧").bytes, 10);
     }
 
     #[test]

@@ -129,6 +129,295 @@ fn with_rename_source(repo: &Path, paths: &[String]) -> Vec<String> {
     targets
 }
 
+/// 文件的 eol 规则。受 `.gitattributes` 约束的文件不做行级暂存：
+/// 暂存区里的行尾与工作区里的行尾本来就不同，行号对不上，出来的补丁会把内容改错。
+///
+/// 形如 `path: eol: crlf` / `path: -text`。没有输出行就是没有这条规则。
+pub fn eol_rule(repo: &Path, path: &str) -> Result<Option<String>, GitError> {
+    let out = process::run(
+        Some(repo),
+        &["check-attr", "eol", "text", "--", path],
+    )?
+    .expect_success()?;
+    let line = out.trim();
+    if line.is_empty() {
+        return Ok(None);
+    }
+    // `a.txt: eol: crlf` → 只取规则那一段，整行原样带出去在界面上太长
+    Ok(Some(line.to_string()))
+}
+
+/// 该文件能不能做行级/分块暂存。
+///
+/// 判据三条（§7.8 的硬边界）：必须是已跟踪文件（未跟踪文件没有 index 版本可比）、
+/// 不能受 eol 规则约束、不能是二进制。
+pub fn partial_supported(repo: &Path, file: &WorkingFile) -> PartialSupport {
+    if file.untracked {
+        return PartialSupport {
+            supported: false,
+            reason: "未跟踪文件没有暂存区版本可比，只能整文件暂存".into(),
+        };
+    }
+    if file.conflict {
+        return PartialSupport {
+            supported: false,
+            reason: "这个文件正处在冲突中，先解决冲突".into(),
+        };
+    }
+    match eol_rule(repo, &file.path) {
+        Ok(Some(rule)) if !rule.contains(": unspecified") => PartialSupport {
+            supported: false,
+            reason: format!("该文件受 eol 规则约束（{rule}），行级暂存会改错内容"),
+        },
+        Ok(_) => PartialSupport {
+            supported: true,
+            reason: String::new(),
+        },
+        Err(err) => PartialSupport {
+            supported: false,
+            reason: format!("读不到该文件的行尾规则：{err:?}"),
+        },
+    }
+}
+
+/// 行级暂存能不能做，以及不能做时的原因（界面直接显示那句话）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartialSupport {
+    pub supported: bool,
+    pub reason: String,
+}
+
+/// 选中的一段改动。`lines` 为空表示整个 hunk；给了行号就只取其中那些增删行
+/// （行号是**工作区差异里**的行号，界面显示什么就传什么）。
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HunkSelection {
+    pub hunk: usize,
+    #[serde(default)]
+    pub lines: Vec<usize>,
+}
+
+/// 按选中的 hunk / 行暂存（§7.8 的逐行 / 分块部分暂存）。
+///
+/// **裁剪在 Rust 侧做**：界面传"第几段、第几行"，这里从 git 的 diff 原文里取出对应的行，
+/// 重算 hunk 头，再拼成补丁。让前端拼补丁文本等于让它自己算行号，而行号错一位就是
+/// 暂存错内容，且这种错不会报错（§13 那条决策记录）。
+///
+/// `--check` 预验通过后才真的 apply，预验不过就整块不落，绝不产生"部分入栈"的中间态。
+/// apply 时带 `--recount`：我们自己删过行，头里的计数已经不真了。
+pub fn stage_hunks(
+    repo: &Path,
+    path: &str,
+    selections: &[HunkSelection],
+) -> Result<Vec<WorkingFile>, GitError> {
+    if selections.is_empty() {
+        return Err(GitError::PatchApplyFailed {
+            detail: "没有选中任何改动".into(),
+        });
+    }
+    let diff = process::run(
+        Some(repo),
+        &["diff", "--no-color", "--unified=3", "--", path],
+    )?
+    .expect_success()?;
+    if diff.trim().is_empty() {
+        return Err(GitError::PatchApplyFailed {
+            detail: format!("{path} 当前没有未暂存的改动可分段暂存"),
+        });
+    }
+    let hunks = split_hunks(&diff);
+
+    let mut patch = String::new();
+    for line in diff.lines().take_while(|line| !line.starts_with("@@")) {
+        patch.push_str(line);
+        patch.push('\n');
+    }
+    for selection in selections {
+        let Some(raw) = hunks.get(selection.hunk) else {
+            return Err(GitError::PatchApplyFailed {
+                detail: format!("第 {} 段改动已经不存在了，请刷新后重试", selection.hunk + 1),
+            });
+        };
+        patch.push_str(&select_from_hunk(raw, &selection.lines)?);
+    }
+    apply_patch(repo, &patch)
+}
+
+/// 从一段 hunk 原文里取出选中的行，并把 hunk 头的两个计数重算一遍。
+///
+/// 计数必须重算：我们删过行，而头里的数字已经不真，`git apply` 会按它去定位，
+/// 于是后面几行全部错位——而错位不会报错，只会静默写错内容。
+fn select_from_hunk(raw: &str, lines: &[usize]) -> Result<String, GitError> {
+    let Some(header) = raw.lines().next() else {
+        return Err(GitError::PatchApplyFailed {
+            detail: "这段改动是空的".into(),
+        });
+    };
+    // 整段：原样返回，头已经是 git 自己算对的
+    if lines.is_empty() {
+        return Ok(raw.to_string());
+    }
+    let (old_start, new_start) = parse_header(header)?;
+
+    let mut body = String::new();
+    let (mut old_count, mut new_count) = (0usize, 0usize);
+    // 上一行被选中时，`\ No newline at end of file` 才跟着走：它说的是上一行没有换行
+    let mut previous_selected = false;
+
+    // enumerate 从 1 起：下标 0 是 hunk 头，它不参与选择
+    for (offset, line) in raw.lines().skip(1).enumerate() {
+        let index = offset;
+        let selected = keep(lines, index, first_char(line));
+        let marker = first_char(line);
+        if selected {
+            match marker {
+                Some(' ') => {
+                    old_count += 1;
+                    new_count += 1;
+                }
+                Some('-') => old_count += 1,
+                Some('+') => new_count += 1,
+                _ => {}
+            }
+            body.push_str(line);
+            body.push('\n');
+        } else if marker == Some('\\') && previous_selected {
+            body.push_str(line);
+            body.push('\n');
+        }
+        previous_selected = selected;
+    }
+
+    if body.is_empty() {
+        return Err(GitError::PatchApplyFailed {
+            detail: "选中的行里没有可暂存的内容".into(),
+        });
+    }
+    Ok(format!(
+        "@@ -{old_start},{old_count} +{new_start},{new_count} @@\n{body}"
+    ))
+}
+
+/// `@@ -a,b +c,d @@` 里的两个起点。计数不参与我们这一步（重算了）。
+fn parse_header(line: &str) -> Result<(usize, usize), GitError> {
+    let failure = || GitError::ParseFailure {
+        snippet: process::snippet(line),
+    };
+    // 头部形如 `@@ -8,7 +8,7 @@ 某个函数`，所以先把两个 `@` 去掉再分词
+    let body = line.trim_start_matches('@');
+    let mut parts = body.split_whitespace();
+    let old = parts.next().ok_or_else(failure)?;
+    let new = parts.next().ok_or_else(failure)?;
+    let start_of = |token: &str| -> Result<usize, GitError> {
+        token
+            .trim_start_matches(['-', '+'])
+            .split(',')
+            .next()
+            .unwrap_or_default()
+            .parse::<usize>()
+            .map_err(|_| failure())
+    };
+    Ok((start_of(old)?, start_of(new)?))
+}
+
+/// 这一行要不要留在补丁里。
+///
+/// 选中的增删行要留；它们周围的**上下文行也要留**，而且留满 3 行（与 `-U3` 相同）：
+/// `git apply` 靠上下文定位，只给一行改动而不给上下文时它会报 "patch does not apply"，
+/// 而那段上下文本身并不是这次要暂存的内容——它只是让 git 找得到位置。
+fn keep(lines: &[usize], index: usize, marker: Option<char>) -> bool {
+    if lines.contains(&index) {
+        return true;
+    }
+    if marker != Some(' ') {
+        return false;
+    }
+    // 上下 3 行内有任何一行被选中，这行就作为上下文带上
+    let low = index.saturating_sub(3);
+    let high = index + 3;
+    (low..=high).any(|around| lines.contains(&around))
+}
+
+fn first_char(line: &str) -> Option<char> {
+    line.chars().next()
+}
+
+/// 把 `git diff` 原文切成一段段 hunk。只认 `@@` 开头的行：
+/// diff 正文里除 hunk 头之外没有别的行以 `@@` 开头。
+fn split_hunks(diff: &str) -> Vec<String> {
+    let mut hunks: Vec<String> = Vec::new();
+    let mut current: Option<String> = None;
+    for line in diff.lines() {
+        if line.starts_with("@@") {
+            if let Some(text) = current.take() {
+                hunks.push(text);
+            }
+            current = Some(format!("{line}\n"));
+            continue;
+        }
+        if let Some(text) = current.as_mut() {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    if let Some(text) = current {
+        hunks.push(text);
+    }
+    hunks
+}
+
+/// 先 `--check` 再 apply。预验不过就是整块不落，索引一动不动（§7.8 的失败回落）。
+fn apply_patch(repo: &Path, patch: &str) -> Result<Vec<WorkingFile>, GitError> {
+    let file = write_patch(repo, patch)?;
+    let checked = process::run(
+        Some(repo),
+        &["apply", "--cached", "--check", "--recount", &file],
+    );
+    match checked {
+        Ok(out) if out.success => {}
+        Ok(out) => {
+            let _ = std::fs::remove_file(&file);
+            return Err(GitError::PatchApplyFailed {
+                detail: first_lines(&out.stderr),
+            });
+        }
+        Err(err) => {
+            let _ = std::fs::remove_file(&file);
+            return Err(err);
+        }
+    }
+
+    let applied = process::run(
+        Some(repo),
+        &["apply", "--cached", "--recount", &file],
+    );
+    let _ = std::fs::remove_file(&file);
+    applied?.expect_success()?;
+    list(repo)
+}
+
+/// 补丁落在 git 目录旁边的临时文件。放在 git 目录里：同一卷上 `git apply` 读它更快，
+/// 而清理失败也只是下次多一个文件。
+fn write_patch(repo: &Path, patch: &str) -> Result<String, GitError> {
+    let dir = process::run(Some(repo), &["rev-parse", "--git-dir"])?.expect_success()?;
+    let path = repo
+        .join(std::path::Path::new(dir.trim()))
+        .join(format!("git-tidy-patch-{}", std::process::id()));
+    std::fs::write(&path, patch)
+        .map_err(|err| GitError::Internal(format!("写补丁临时文件失败：{err}")))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn first_lines(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(4)
+        .collect::<Vec<_>>()
+        .join("；")
+}
+
 /// 路径一律排在 `--` 之后当 pathspec：以 `-` 开头的文件名不会被读成选项，
 /// 越出仓库的路径由 git 自己拒（"is outside repository"），我们不复述它的规则。
 fn run_paths(repo: &Path, head: &[&str], paths: &[String]) -> Result<(), GitError> {
@@ -419,6 +708,185 @@ mod tests {
         assert_eq!(find(&files, "a.txt").worktree_status, "D");
         assert!(find(&files, "b.txt").untracked);
     }
+
+    /// §7.8 的验收：一个文件三个 hunk，只暂存中间一个时 `git diff --cached` 与所选完全一致、
+    /// `git diff` 剩两个 hunk。
+    #[test]
+    fn one_hunk_of_three_can_be_staged_on_its_own() {
+        let repo = init_repo();
+        let dir = repo.path();
+        let mut base = String::new();
+        for i in 1..=21 {
+            base.push_str(&format!("原始第{i}行\n"));
+        }
+        fs::write(dir.join("a.txt"), &base).expect("write");
+        stage_and_commit(dir, "chore: 铺底");
+
+        let mut changed = base.clone();
+        changed = changed.replace("原始第2行", "改过的第2行");
+        changed = changed.replace("原始第11行", "改过的第11行");
+        changed = changed.replace("原始第20行", "改过的第20行");
+        fs::write(dir.join("a.txt"), &changed).expect("write");
+
+        // 选中间那一整段：三段之间隔着足够的上下文，git 才会分成三段
+        let diff = process::run(
+            Some(dir),
+            &["diff", "--no-color", "--unified=3", "--", "a.txt"],
+        )
+        .expect("diff")
+        .stdout;
+        let hunks = split_hunks(&diff);
+        assert_eq!(hunks.len(), 3, "这个 fixture 应该有三段：{diff}");
+
+        let after = stage_hunks(dir, "a.txt", &[HunkSelection { hunk: 1, lines: Vec::new() }])
+            .expect("暂存中间那段");
+        let entry = find(&after, "a.txt");
+        assert!(entry.staged, "选中的一段要进索引");
+
+        let staged = process::run(Some(dir), &["diff", "--cached", "--unified=0"]).expect("cached");
+        assert!(
+            staged.stdout.contains("改过的第11行"),
+            "暂存区里该只有选中的那一处：{}",
+            staged.stdout
+        );
+        assert!(!staged.stdout.contains("改过的第2行"), "没选的不该进来");
+        assert!(!staged.stdout.contains("改过的第20行"), "没选的不该进来");
+
+        let rest = process::run(Some(dir), &["diff", "--unified=0"]).expect("worktree");
+        assert!(rest.stdout.contains("改过的第2行"));
+        assert!(rest.stdout.contains("改过的第20行"));
+        assert!(!rest.stdout.contains("改过的第11行"), "已暂存的那处不该还在工作区差异里");
+    }
+
+    /// 行级：一段里只选一行，暂存区里就该只有那一行的改动
+    #[test]
+    fn a_single_line_inside_a_hunk_can_be_staged() {
+        let repo = init_repo();
+        let dir = repo.path();
+        fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").expect("write");
+        stage_and_commit(dir, "chore: 铺底");
+        fs::write(dir.join("a.txt"), "ONE\ntwo\nthree\n").expect("write");
+
+        let diff = process::run(
+            Some(dir),
+            &["diff", "--no-color", "--unified=3", "--", "a.txt"],
+        )
+        .expect("diff")
+        .stdout;
+        let hunks = split_hunks(&diff);
+        assert_eq!(hunks.len(), 1);
+
+        // hunk 内第 0 行是删除 one、第 1 行是新增 ONE：只暂存这一处改动。
+        // 上下文行会被自动带上（git apply 靠它定位），但不算改动
+        let after = stage_hunks(
+            dir,
+            "a.txt",
+            &[HunkSelection {
+                hunk: 0,
+                lines: vec![0, 1],
+            }],
+        )
+        .expect("只暂存这一处改动");
+        assert!(find(&after, "a.txt").staged);
+
+        let staged = process::run(Some(dir), &["diff", "--cached"]).expect("cached").stdout;
+        assert!(staged.contains("-one"), "{staged}");
+        assert!(staged.contains("+ONE"), "{staged}");
+        // 上下文行会被原样带上（`git apply` 靠它定位），但它们不算改动：
+        // 暂存完之后，工作区与索引之间不该再剩下任何差异
+        assert!(
+            process::run(Some(dir), &["diff"]).expect("worktree").stdout.trim().is_empty(),
+            "选中这一处之后不该还有未暂存的改动"
+        );
+    }
+
+    /// 预验不过就整块不落：索引不能出现"半个 hunk"的中间态（§7.8 的失败回落）
+    #[test]
+    fn a_patch_that_does_not_apply_leaves_the_index_untouched() {
+        let repo = init_repo();
+        let dir = repo.path();
+        fs::write(dir.join("a.txt"), "1\n").expect("write");
+        stage_and_commit(dir, "chore: 铺底");
+
+        let before = process::run(Some(dir), &["diff", "--cached"]).expect("cached").stdout;
+        // 指一段不存在的位置：整块必须被拒
+        let err = stage_hunks(dir, "a.txt", &[HunkSelection { hunk: 7, lines: Vec::new() }])
+            .expect_err("不存在的段不该被接受");
+        assert!(
+            matches!(err, GitError::PatchApplyFailed { .. }),
+            "要报 PatchApplyFailed：{err:?}"
+        );
+        assert_eq!(
+            process::run(Some(dir), &["diff", "--cached"]).expect("cached").stdout,
+            before,
+            "预验不过时索引不能变"
+        );
+    }
+
+    #[test]
+    fn a_file_with_no_unstaged_change_cannot_be_staged_in_parts() {
+        let repo = init_repo();
+        let dir = repo.path();
+        fs::write(dir.join("a.txt"), "1\n").expect("write");
+        stage_and_commit(dir, "chore: 铺底");
+
+        let err = stage_hunks(dir, "a.txt", &[HunkSelection { hunk: 0, lines: Vec::new() }])
+            .expect_err("没有未暂存改动时不该接受分段暂存");
+        assert!(format!("{err:?}").contains("未暂存"), "{err:?}");
+    }
+
+    #[test]
+    fn an_empty_selection_is_refused_rather_than_writing_an_empty_patch() {
+        let repo = init_repo();
+        let err = stage_hunks(repo.path(), "a.txt", &[]).expect_err("空选不该写补丁");
+        assert!(matches!(err, GitError::PatchApplyFailed { .. }), "{err:?}");
+    }
+
+    /// 硬边界：未跟踪文件没有暂存区版本可比，只能整文件暂存
+    #[test]
+    fn an_untracked_file_cannot_be_partially_staged() {
+        let repo = init_repo();
+        let dir = repo.path();
+        fs::write(dir.join("a.txt"), "1\n").expect("write");
+        stage_and_commit(dir, "chore: 铺底");
+        fs::write(dir.join("new.txt"), "全新的\n").expect("write");
+
+        let files = list(dir).expect("status");
+        let fresh = find(&files, "new.txt");
+        let support = partial_supported(dir, fresh);
+        assert!(!support.supported, "未跟踪文件不能行级暂存");
+        assert!(support.reason.contains("未跟踪"), "{}", support.reason);
+    }
+
+    #[test]
+    fn a_plain_tracked_file_supports_line_level_staging() {
+        let repo = init_repo();
+        let dir = repo.path();
+        fs::write(dir.join("a.txt"), "1\n").expect("write");
+        stage_and_commit(dir, "chore: 铺底");
+        fs::write(dir.join("a.txt"), "2\n").expect("write");
+
+        let files = list(dir).expect("status");
+        assert!(partial_supported(dir, find(&files, "a.txt")).supported);
+    }
+
+    /// 受 eol 规则约束的文件要明确拒绝行级暂存，而不是给出一个会改错内容的补丁
+    #[test]
+    fn an_eol_constrained_file_is_refused_with_a_reason() {
+        let repo = init_repo();
+        let dir = repo.path();
+        fs::write(dir.join(".gitattributes"), "*.txt text eol=crlf\n").expect("write");
+        fs::write(dir.join("a.txt"), "1\n").expect("write");
+        stage_and_commit(dir, "chore: 铺底");
+        fs::write(dir.join("a.txt"), "2\n").expect("write");
+
+        let files = list(dir).expect("status");
+        let support = partial_supported(dir, find(&files, "a.txt"));
+        assert!(!support.supported, "eol 规则下的文件不该给行级入口");
+        assert!(support.reason.contains("eol"), "{}", support.reason);
+    }
+
+    /// split_hunks 现在是库内的正式函数，测试直接用它，不再在下面写一份
 
     #[test]
     fn an_empty_path_list_is_a_no_op_that_still_returns_the_status() {

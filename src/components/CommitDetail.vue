@@ -1,12 +1,23 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import dayjs from "dayjs";
-import { NAlert, NEmpty, NSpin, NSwitch, NTag } from "naive-ui";
+import {
+  NAlert,
+  NButton,
+  NEmpty,
+  NPopconfirm,
+  NSelect,
+  NSpace,
+  NSpin,
+  NSwitch,
+  NTag,
+} from "naive-ui";
 import DiffView from "@/components/DiffView.vue";
 import { formatDelta } from "@/format";
 import type { Change, ChangeStatus } from "@/api/detail";
 import type { Commit } from "@/api/commit";
 import { useDetailStore } from "@/stores/detail";
+import { useWriteStore } from "@/stores/write";
 
 /**
  * 「历史」页右半边：选中提交的信息 + 它改了哪些文件 + 其中一个文件的差异。
@@ -18,6 +29,13 @@ const props = defineProps<{
 }>();
 
 const store = useDetailStore();
+const writes = useWriteStore();
+
+/**
+ * 回滚合并提交时必须显式选主线（§7.11）：`-m 1` 与 `-m 2` 回掉的是相反的一侧，
+ * 默认一个就是替用户做了一次不可逆的决定。所以这里不给默认值。
+ */
+const mainline = ref<number | null>(null);
 
 const STATUS_LETTER: Record<ChangeStatus, string> = {
   add: "A",
@@ -82,6 +100,26 @@ function retry() {
   if (props.repoId === null) return;
   store.retryDiff(props.repoId);
 }
+
+/** 摘取这一条到当前分支。冲突时 Rust 侧回中断态，顶部提示条给一键退回 */
+async function pickThis() {
+  if (props.commit === null) return;
+  await writes.pick(props.commit.id);
+}
+
+async function revertThis() {
+  if (props.commit === null) return;
+  // 合并提交没选主线就拒：这个选择不能由工具替用户做
+  if (props.commit.merge && mainline.value === null) return;
+  await writes.revert(props.commit.id, mainline.value);
+  mainline.value = null;
+}
+
+/** reset 到这条提交。soft / mixed / hard 三档各是一次确认 */
+async function resetToThis(mode: "soft" | "mixed" | "hard") {
+  if (props.commit === null) return;
+  await writes.reset(mode, props.commit.id);
+}
 </script>
 
 <template>
@@ -93,6 +131,52 @@ function retry() {
         <code class="sha" :title="commit.id">{{ commit.id.slice(0, 10) }}</code>
         <span class="subject">{{ commit.subject }}</span>
       </div>
+      <!--
+        这一条的写操作。全部经 write_guard：脏工作区、中断态、HEAD 被别处挪动
+        都会在 Rust 侧被拒，界面只负责把拒绝的理由显示出来。
+      -->
+      <n-space size="small" class="ops" align="center">
+        <n-button size="tiny" quaternary :disabled="!writes.canWrite" @click="pickThis">
+          摘取到当前分支
+        </n-button>
+        <n-popconfirm :disabled="!writes.canWrite" positive-text="回滚" negative-text="算了" @positive-click="revertThis">
+          <template #trigger>
+            <n-button size="tiny" quaternary :disabled="!writes.canWrite">回滚这条</n-button>
+          </template>
+          <div class="revert-note">
+            <div>回滚是在当前分支上新增一条反向提交，历史不会被删除。</div>
+            <div v-if="commit.merge" class="warn">
+              这是合并提交，<b>必须选主线</b>：选错会撤掉另一侧的工作。
+            </div>
+            <n-space v-if="commit.merge" size="small" align="center">
+              <n-select
+                v-model:value="mainline"
+                size="small"
+                class="mainline"
+                placeholder="选主线"
+                :options="[
+                  { label: '主线 1（第一父）', value: 1 },
+                  { label: '主线 2（第二父）', value: 2 },
+                ]"
+              />
+            </n-space>
+          </div>
+        </n-popconfirm>
+        <n-popconfirm positive-text="reset --soft" negative-text="算了" @positive-click="resetToThis('soft')">
+          <template #trigger>
+            <n-button size="tiny" quaternary :disabled="!writes.canWrite">重置到此（soft）</n-button>
+          </template>
+          提交留在历史里，改动回到暂存区。
+        </n-popconfirm>
+        <n-popconfirm positive-text="reset --hard" negative-text="算了" @positive-click="resetToThis('hard')">
+          <template #trigger>
+            <n-button size="tiny" quaternary type="error" :disabled="!writes.canWrite">
+              丢弃到此处（hard）
+            </n-button>
+          </template>
+          <b>会扔掉这条之后的全部提交与工作区里的改动。</b>工作区脏时这一档会被拒绝。
+        </n-popconfirm>
+      </n-space>
       <div class="meta muted">
         {{ commit.authorName }} &lt;{{ commit.authorEmail }}&gt; ·
         {{ dayjs(commit.time * 1000).format("YYYY-MM-DD HH:mm") }}
@@ -177,6 +261,25 @@ function retry() {
   display: flex;
   align-items: baseline;
   gap: 8px;
+}
+
+.ops {
+  flex-wrap: wrap;
+}
+
+.mainline {
+  width: 150px;
+}
+
+.revert-note {
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 320px;
+}
+
+.revert-note .warn {
+  color: #8a5a00;
+  margin: 4px 0;
 }
 
 .sha {

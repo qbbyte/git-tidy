@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { NButton, NCheckbox, NEmpty, NTag } from "naive-ui";
 import CommitForm from "@/components/CommitForm.vue";
+import PartialStage from "@/components/PartialStage.vue";
 import { useReposStore } from "@/stores/repos";
+import { useWriteStore } from "@/stores/write";
 import type { WorkingFile } from "@/api/status";
 
 /**
@@ -13,12 +15,16 @@ import type { WorkingFile } from "@/api/status";
  * 返回的整份列表为准，不做乐观更新。
  */
 const repos = useReposStore();
+const writes = useWriteStore();
 
 const repoId = computed(() => repos.currentId);
 const staged = computed(() => repos.stagedFiles);
 const changed = computed(() => repos.changedFiles);
-/** 一次 IPC 能带一串路径，"全部"就是把它当成一次多文件操作 */
-const busy = computed(() => repos.staging);
+/** 一次 IPC 能带一串路径，“全部”就是把它当成一次多文件操作 */
+const busy = computed(() => repos.staging || writes.busy);
+
+/** 展开分段暂存的那一行。一次只开一个：两处 diff 同时铺开会把左栏挤没 */
+const expanded = ref<string | null>(null);
 
 function statusOf(file: WorkingFile) {
   if (file.conflict) return { text: "冲突", type: "error" as const };
@@ -55,6 +61,11 @@ function unstageAll() {
 
 function pathLabel(file: WorkingFile) {
   return file.fromPath ? `${file.fromPath} → ${file.path}` : file.path;
+}
+
+/** 中断态里只给一键退回：提交与写操作全都会被 Rust 侧拒（§3 的 M2 边界） */
+function toggleExpand(file: WorkingFile) {
+  expanded.value = expanded.value === file.path ? null : file.path;
 }
 </script>
 
@@ -100,12 +111,19 @@ function pathLabel(file: WorkingFile) {
         </n-button>
       </header>
       <div class="file-list">
-        <div v-for="file in changed" :key="`changed-${file.path}`" class="file-row">
-          <n-checkbox :checked="false" :disabled="busy" @update:checked="check(file)" />
-          <n-tag :type="statusOf(file).type" size="tiny" :bordered="false">
-            {{ statusOf(file).text }}
-          </n-tag>
-          <code class="file-path" :title="pathLabel(file)">{{ pathLabel(file) }}</code>
+        <div v-for="file in changed" :key="`changed-${file.path}`" class="file-block">
+          <div class="file-row">
+            <n-checkbox :checked="false" :disabled="busy" @update:checked="check(file)" />
+            <n-tag :type="statusOf(file).type" size="tiny" :bordered="false">
+              {{ statusOf(file).text }}
+            </n-tag>
+            <code class="file-path" :title="pathLabel(file)">{{ pathLabel(file) }}</code>
+            <!-- 分段暂存的入口：点开才去取这个文件的未暂存改动 -->
+            <n-button size="tiny" quaternary @click.stop="toggleExpand(file)">
+              {{ expanded === file.path ? "收起" : "分段" }}
+            </n-button>
+          </div>
+          <partial-stage v-if="expanded === file.path" :file="file" />
         </div>
         <n-empty v-if="!changed.length" size="small" description="工作区干净" />
       </div>
@@ -158,6 +176,10 @@ function pathLabel(file: WorkingFile) {
   padding: 6px 8px;
   max-height: 38vh;
   overflow: auto;
+}
+
+.file-block {
+  border-bottom: 1px solid #f4f6f8;
 }
 
 .file-row {
