@@ -1,6 +1,7 @@
 pub mod commit;
 pub mod detail;
 pub mod diff;
+pub mod file;
 pub mod graph;
 pub mod refs;
 pub mod remote;

@@ -3,8 +3,10 @@ import { defineStore } from "pinia";
 import { GitTidyError } from "@/api/client";
 import {
   fetchGraph,
+  filterIsEmpty,
   listCommits,
   type Commit,
+  type CommitFilter,
   type GraphRow,
 } from "@/api/commit";
 
@@ -16,6 +18,18 @@ export const useCommitStore = defineStore("commits", () => {
   const total = ref(0);
   const loading = ref(false);
   const error = ref<GitTidyError | null>(null);
+  /**
+   * 解析层筛选扫到上限时 Rust 会置位：这时"共 N 条"与实得条数可能对不上，
+   * 界面必须写明"只扫了前一段"，不能让人以为那就是全部。
+   */
+  const truncated = ref(false);
+
+  /**
+   * 当前筛选条件（§7.7）。它同时喂给列表和图两次 IPC——两边必须用同一份，
+   * 否则会拿到未筛选那份列表配筛选那份泳道，行对不上。
+   */
+  const filter = ref<CommitFilter>({});
+  const filtering = computed(() => !filterIsEmpty(filter.value));
 
   /**
    * 图列状态。这里的行号是"当前这次 HEAD 遍历"里的位置，不是仓库全历史的绝对位置：
@@ -48,18 +62,24 @@ export const useCommitStore = defineStore("commits", () => {
       graphReady.value = false;
       graphError.value = null;
     }
+    // 两次 IPC 各拿一份快照：期间用户又改了筛选条件的话，发出去的是旧条件，
+    // 结果落地时靠下面的 generation/条件比对丢掉
+    const shot = { ...filter.value };
     try {
-      const page = await listCommits(repoId, skip, PAGE_SIZE);
+      const page = await listCommits(repoId, skip, PAGE_SIZE, shot);
+      if (!sameFilter(shot, filter.value)) return;
       commits.value = replace ? page.commits : commits.value.concat(page.commits);
       total.value = page.total;
+      truncated.value = page.truncated ?? false;
       // 图列跟列表要同一扇窗口，所以放在列表落地之后发：本页实际有几行就取几行。
       // 这一步不 await：图那一层要读的比这一页多得多，让它自己到齐。
-      loadGraphWindow(repoId, skip, page.commits.length);
+      loadGraphWindow(repoId, skip, page.commits.length, shot);
     } catch (err) {
+      if (!sameFilter(shot, filter.value)) return;
       error.value =
         err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
     } finally {
-      loading.value = false;
+      if (sameFilter(shot, filter.value)) loading.value = false;
     }
   }
 
@@ -75,13 +95,33 @@ export const useCommitStore = defineStore("commits", () => {
     return fetchPage(repoId, commits.value.length, false);
   }
 
-  async function loadGraphWindow(repoId: number, skip: number, count: number) {
+  /**
+   * 换筛选条件：整批重取。**图也一起作废重算**——可见集合变了，泳道就得按新集合算，
+   * 而列宽是"整条历史的最宽值"，所以第一扇窗口落地之前图列不画（§7.2 的老规矩不变）。
+   */
+  function applyFilter(repoId: number, next: CommitFilter) {
+    filter.value = next;
+    commits.value = [];
+    total.value = 0;
+    return fetchPage(repoId, 0, true);
+  }
+
+  function clearFilter(repoId: number) {
+    return applyFilter(repoId, {});
+  }
+
+  async function loadGraphWindow(
+    repoId: number,
+    skip: number,
+    count: number,
+    shot: CommitFilter,
+  ) {
     if (count <= 0) return;
     const myGeneration = graphGeneration.value;
     graphOutstanding.value += 1;
     try {
-      const window = await fetchGraph(repoId, skip, count);
-      if (myGeneration !== graphGeneration.value) return;
+      const window = await fetchGraph(repoId, skip, count, shot);
+      if (myGeneration !== graphGeneration.value || !sameFilter(shot, filter.value)) return;
       for (const row of window.rows) graphRows.value.set(row.sha, row);
       triggerRef(graphRows);
       graphLanes.value = Math.max(graphLanes.value, window.lanes);
@@ -103,6 +143,9 @@ export const useCommitStore = defineStore("commits", () => {
     total,
     loading,
     error,
+    truncated,
+    filter,
+    filtering,
     loadedAll,
     graphLanes,
     graphReady,
@@ -111,5 +154,12 @@ export const useCommitStore = defineStore("commits", () => {
     rowFor,
     open,
     loadMore,
+    applyFilter,
+    clearFilter,
   };
 });
+
+/** 两份筛选条件是不是同一组：JSON 比一遍，顺序也算（Rust 侧按顺序组参数） */
+function sameFilter(a: CommitFilter, b: CommitFilter): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}

@@ -20,11 +20,39 @@ export interface Commit {
   commitType: string | null;
   scope: string | null;
   breaking: boolean;
+  /** 父提交号。Rust 侧在父集合为空时省掉这个字段 */
+  parents?: string[];
 }
 
 export interface CommitPage {
   commits: Commit[];
+  /** 总数。带筛选时是 git 按同一组条件数出来的（§7.7） */
   total: number;
+  /**
+   * 只按合规/type 筛时解析层要分段扫历史，扫到上限就会置位。
+   * 置位时"共 N 条"与实得条数可能不一致，界面上要写明"只扫了前一段"。
+   */
+  truncated?: boolean;
+}
+
+/**
+ * 筛选条件（§7.7）。两类能力分开：前五个是 git 认识的条件，直接映射成 `log` 的
+ * 参数；后两个 git 不认识（Conventional Commits 是我们的规矩），由 Rust 侧在解析层判。
+ * 字段名必须与 Rust 侧 `log::Filter` 的 serde 名一致。
+ */
+export interface CommitFilter {
+  /** rev 范围：分支名、`a..b`、`HEAD~3` */
+  rev?: string | null;
+  authors?: string[];
+  grep?: string[];
+  /** 只看动过某个路径的提交 */
+  path?: string | null;
+  since?: string | null;
+  until?: string | null;
+  /** Conventional type 白名单（小写） */
+  types?: string[];
+  /** true 只留合规，false 只留不合规 */
+  conformant?: boolean | null;
 }
 
 /** 与 Rust 侧 git/graph.rs 的 Segment 一一对应。 */
@@ -34,6 +62,11 @@ export interface GraphSegment {
   /** 本行底部的泳道下标，等于 from 就是竖线 */
   to: number;
   color: number;
+  /**
+   * 这段线下面没有可见的落点：父提交被筛选挡掉了。
+   * 前端画成一段短截断线加端点，绝不硬连到下一行——连错一行比画不出来严重得多。
+   */
+  dangling?: boolean;
 }
 
 /** 与 Rust 侧 git/graph.rs 的 Row 一一对应。 */
@@ -57,14 +90,42 @@ export interface CommitWindow {
 
 /** 按注册仓库 id 分页读提交，路径由 Rust 侧从注册表解析（§7.1）。
  *  参数名必须与 Rust 形点一致（id 而不是 repoId），Tauri 是按名字匹配的。 */
-export function listCommits(repoId: number, skip: number, limit: number) {
-  return call<CommitPage>("commit_list", { id: repoId, skip, limit });
+export function listCommits(
+  repoId: number,
+  skip: number,
+  limit: number,
+  filter?: CommitFilter,
+) {
+  return call<CommitPage>("commit_list", { id: repoId, skip, limit, filter: filter ?? null });
+}
+
+/**
+ * 读一条提交本身。从文件历史、blame 跳到一条**不在当前列表页里**的提交时用它：
+ * 没有它，那种跳转只能拿到一个 sha，没有标题、作者与父。
+ */
+export function showCommit(repoId: number, sha: string) {
+  return call<Commit>("commit_show", { id: repoId, sha });
 }
 
 /**
  * 读同一扇窗口的图列数据。skip/count 必须与上面那次一致，count 是本页实际拿到的行数：
  * Rust 侧两边共用同一个 --topo-order，行号才落在同一条水平线上。
+ * filter 也要一致：筛选改变可见集合，图是按可见集合算的。
  */
-export function fetchGraph(repoId: number, skip: number, count: number) {
-  return call<CommitWindow>("commit_graph", { id: repoId, skip, count });
+export function fetchGraph(repoId: number, skip: number, count: number, filter?: CommitFilter) {
+  return call<CommitWindow>("commit_graph", { id: repoId, skip, count, filter: filter ?? null });
+}
+
+/** 有没有任何筛选条件。空条件与"没传"在 Rust 侧是同一条代码路径 */
+export function filterIsEmpty(filter: CommitFilter): boolean {
+  return (
+    !filter.rev &&
+    !filter.path &&
+    !filter.since &&
+    !filter.until &&
+    (filter.authors?.length ?? 0) === 0 &&
+    (filter.grep?.length ?? 0) === 0 &&
+    (filter.types?.length ?? 0) === 0 &&
+    filter.conformant === undefined
+  );
 }

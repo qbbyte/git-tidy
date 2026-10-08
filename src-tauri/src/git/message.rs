@@ -6,7 +6,7 @@ use serde::Serialize;
 /// 任务 ID 规则都来自仓库配置（需求 6.7），由配置层在本结果之上做判定。
 /// 拆成两层是为了让 commit 列表、CHANGELOG、符合率报告共用同一份语法解析，
 /// 而不是三处各写一遍规则、日后各自漂移。
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
     /// 解析不出 `type: ` 头部时为 None，即"非规范提交"。统一转小写比对交给配置层。

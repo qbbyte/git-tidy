@@ -33,9 +33,9 @@ struct Raw {
 }
 
 impl Raw {
-    /// 这条记录在 numstat 里占几个路径字段：rename/copy 是"源 + 目标"两个
-    fn path_fields(&self) -> usize {
-        usize::from(self.old_path.is_some()) + 1
+    /// 这条记录在 `-z` 的 numstat 里是不是多占两个路径 token（改名/复制）
+    fn renamed(&self) -> bool {
+        self.old_path.is_some()
     }
 }
 
@@ -238,8 +238,8 @@ fn parse_raw(stdout: &str) -> Result<Vec<Raw>, GitError> {
             score,
             old_mode: (*old_mode).to_string(),
             new_mode: (*new_mode).to_string(),
-            old_blob: full_sha(*old_blob),
-            new_blob: full_sha(*new_blob),
+            old_blob: full_sha(old_blob),
+            new_blob: full_sha(new_blob),
             old_path: if want == 2 { Some(paths[0].to_string()) } else { None },
             path: path.to_string(),
         });
@@ -287,22 +287,31 @@ fn full_sha(raw: &str) -> Option<String> {
 /// numstat 的行数差，**按位置对齐**到 raw 的记录上：两边来自同一套 diff 引擎、同一条顺序，
 /// 所以第 i 条就是第 i 个文件，不需要拿路径去猜。
 ///
-/// 唯一要判的是字段形态：`-z` 下路径自己占 token，非 `-z` 下路径挂在同一个 token 的第三段。
+/// 要接的是两种字段形态（本机 git 2.54 实测）：
+/// - `-z`：非 rename/copy 记录是 `增\t删\t路径` 一个 token；**改名记录占三个 token**——
+///   `增\t删\t` 后面跟一个 NUL，再是源路径、目标路径各一个。这就是改名那条"路径字段比别的
+///   记录多"的来源，只按"每条记录一个 token"数必然对不上（这条曾把带改名的提交打成
+///   ParseFailure：文件清单整条读不出来）；
+/// - 非 `-z`：每条记录一个 token，改名把两个路径写成 `old => new`。
+///
 /// 两种都由"token 总数"一次定死，对不上就带原文报错而不是含糊兜底。
-fn counts_for(records: &[Raw], stdout: &str) -> Result<Vec<(Option<usize>, Option<usize>)>, GitError> {
+/// 一条记录的行数差：两侧各一个数字，`-`（二进制）记 None
+type Counts = Vec<(Option<usize>, Option<usize>)>;
+
+fn counts_for(records: &[Raw], stdout: &str) -> Result<Counts, GitError> {
     let tokens = z_tokens(stdout);
-    let path_fields: usize = records.iter().map(Raw::path_fields).sum();
-    let split_shape = records.len() + path_fields == tokens.len();
+    let renamed = records.iter().filter(|record| record.renamed()).count();
+    let nul_shape = records.len() + 2 * renamed == tokens.len();
     let inline_shape = records.len() == tokens.len();
 
-    if !split_shape && !inline_shape {
+    if !nul_shape && !inline_shape {
         return Err(parse_failure(
             &tokens,
             0,
             &format!(
-                "numstat 的字段数对不上：{} 条记录、{} 个路径字段、{} 个 token",
+                "numstat 的字段数对不上：{} 条记录（其中 {} 条改名）、{} 个 token",
                 records.len(),
-                path_fields,
+                renamed,
                 tokens.len()
             ),
         ));
@@ -313,17 +322,21 @@ fn counts_for(records: &[Raw], stdout: &str) -> Result<Vec<(Option<usize>, Optio
     for record in records {
         let (added, deleted, tail) = split_counts(&tokens, index)?;
         index += 1;
-        if split_shape {
-            index += record.path_fields();
-        } else if let Some(tail) = tail {
-            // 内联形态下路径就在同一个 token 里；非 rename 的记录顺手对一下，
-            // 名字都串了说明我们对 git 输出形态的理解错了，宁可报错
-            if record.old_path.is_none() && tail != record.path {
-                return Err(parse_failure(
-                    &tokens,
-                    index,
-                    &format!("numstat 路径与 raw 不一致：{tail} ≠ {}", record.path),
-                ));
+        if nul_shape {
+            // 改名那条的源路径与目标路径各占一个 token
+            index += usize::from(record.renamed()) * 2;
+        }
+        // 非改名的记录顺手把路径对一下：名字都串了说明我们对 git 输出形态的理解错了，宁可报错。
+        // 改名的路径两种形态都不一样（`old => new` 或分成两个 token），不在这里对
+        if !record.renamed() {
+            if let Some(tail) = tail {
+                if tail != record.path {
+                    return Err(parse_failure(
+                        &tokens,
+                        index,
+                        &format!("numstat 路径与 raw 不一致：{tail} ≠ {}", record.path),
+                    ));
+                }
             }
         }
         out.push((added, deleted));
@@ -332,7 +345,10 @@ fn counts_for(records: &[Raw], stdout: &str) -> Result<Vec<(Option<usize>, Optio
 }
 
 /// `1\t1\tpath` / `-\t-\0`：前两段是行数，第三段（如果有）是路径。
-fn split_counts<'a>(tokens: &'a [&'a str], index: usize) -> Result<(Option<usize>, Option<usize>, Option<&'a str>), GitError> {
+/// 一次拆出：增、删，以及同一个 token 里剩下的第三段（内联形态下的路径）
+type Counts3<'a> = (Option<usize>, Option<usize>, Option<&'a str>);
+
+fn split_counts<'a>(tokens: &'a [&'a str], index: usize) -> Result<Counts3<'a>, GitError> {
     let token = *tokens
         .get(index)
         .ok_or_else(|| parse_failure(tokens, index, "numstat 提前结束"))?;
@@ -653,18 +669,21 @@ mod tests {
             },
         ];
 
-        // 形态一：counts 与路径分开各占一个 token
-        let split = "2\t1\0keep.txt\00\t0\0old.txt\0new.txt\0";
-        let got = counts_for(&records, split).expect("分开的形态");
+        // 形态一：`-z`（实测）。非改名记录是一个 token，改名那条占三个：计数、源、目标
+        let nul = "2\t1\tkeep.txt\x000\t0\t\x00old.txt\x00new.txt\x00";
+        let got = counts_for(&records, nul).expect("-z 的形态");
         assert_eq!(got, vec![(Some(2), Some(1)), (Some(0), Some(0))]);
 
         // 形态二：路径挂在同一个 token 的第三段
-        let inline = "2\t1\tkeep.txt\00\t0\told.txt => new.txt\0";
+        let inline = "2\t1\tkeep.txt\x000\t0\told.txt => new.txt\x00";
         let got = counts_for(&records, inline).expect("内联的形态");
         assert_eq!(got, vec![(Some(2), Some(1)), (Some(0), Some(0))]);
 
-        // 对不上：token 数既不匹配"分开形态"也不匹配"内联形态"
-        let err = counts_for(&records, "2\t1\0keep.txt\00\t0\0old.txt\0new.txt\0extra\0")
+        // 对不上：token 数既不匹配 `-z` 形态也不匹配内联形态
+        let err = counts_for(
+            &records,
+            "2\t1\tkeep.txt\x000\t0\t\x00old.txt\x00new.txt\x00extra\x00",
+        )
             .expect_err("该报错");
         let text = format!("{err:?}");
         assert!(text.contains("字段数对不上"), "报错要说清为什么：{text}");

@@ -112,6 +112,38 @@ function strokeOf(segment: GraphSegment) {
   return bend(fromX, 0, toX, ROW_HEIGHT);
 }
 
+/**
+ * 截断端点（筛选态，§7.7）：父提交被筛掉了，这段边下面没有可见的行可接。
+ *
+ * 画法是一段短竖线加一个端点帽，**不画到行底**——画到底就等于告诉用户
+ * "下一行那条就是它的父"，而那一行根本不在可见集合里。宁可少画一段，
+ * 也不能让用户顺着一条不存在的连线去找一条不存在的提交。
+ */
+function stubEndOf(segment: GraphSegment) {
+  const fromX = centerX(segment.from);
+  const x = centerX(segment.to);
+  return `M ${fromX} ${ROW_HEIGHT / 2} C ${fromX} ${ROW_HEIGHT / 2 + 8}, ${x} ${
+    ROW_HEIGHT - 14
+  }, ${x} ${ROW_HEIGHT - 8}`;
+}
+
+/** 端点帽：一个小横杠，让这一段看着是"到头了"而不是"被裁了" */
+function stubCapOf(segment: GraphSegment) {
+  const x = centerX(segment.to);
+  const y = ROW_HEIGHT - 8;
+  return `M ${x - 3} ${y} L ${x + 3} ${y}`;
+}
+
+/** 实线段。截断边另画，两者不能共用一条 path */
+function solidOf(row?: GraphRow) {
+  return row?.segments.filter((segment) => !segment.dangling) ?? [];
+}
+
+/** 截断边：它下面没有落点，所以没有"等在哪一列"这回事 */
+function danglingOf(row?: GraphRow) {
+  return row?.segments.filter((segment) => segment.dangling) ?? [];
+}
+
 const strokeColor = (color: number) => PALETTE[color % PALETTE.length];
 const dotColor = () => (props.row ? strokeColor(props.row.color) : "transparent");
 
@@ -164,7 +196,7 @@ function stubOf() {
           stroke-linecap="round"
         />
         <path
-          v-for="(segment, index) in row.segments"
+          v-for="(segment, index) in solidOf(row)"
           :key="index"
           :d="strokeOf(segment)"
           :stroke="strokeColor(segment.color)"
@@ -172,6 +204,23 @@ function stubOf() {
           fill="none"
           stroke-linecap="round"
         />
+        <!-- 截断边：短竖线 + 端点帽，不接到下一行 -->
+        <g v-for="(segment, index) in danglingOf(row)" :key="`d${index}`">
+          <path
+            :d="stubEndOf(segment)"
+            :stroke="strokeColor(segment.color)"
+            stroke-width="2"
+            fill="none"
+            stroke-linecap="round"
+          />
+          <path
+            :d="stubCapOf(segment)"
+            :stroke="strokeColor(segment.color)"
+            stroke-width="2"
+            fill="none"
+            stroke-linecap="round"
+          />
+        </g>
         <circle
           :cx="centerX(row.lane)"
           :cy="ROW_HEIGHT / 2"

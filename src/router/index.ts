@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 import CommitsView from "@/views/CommitsView.vue";
 import CommitView from "@/views/CommitView.vue";
+import FilesView from "@/views/FilesView.vue";
 
 /**
  * 用 hash 模式：Tauri 生产包走自定义协议加载本地文件，history 模式下深链刷新会命中
@@ -13,6 +14,7 @@ export const router = createRouter({
   routes: [
     { path: "/", redirect: { name: "history" } },
     { path: "/history", name: "history", component: CommitsView },
+    { path: "/files", name: "files", component: FilesView },
     { path: "/commit", name: "commit", component: CommitView },
   ],
 });

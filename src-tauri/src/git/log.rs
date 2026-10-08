@@ -1,9 +1,11 @@
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::refs::{self, Badge};
 use super::{message, process};
+use crate::config::check;
+use crate::config::spec::Spec;
 use crate::error::GitError;
 
 /// git log 的字段顺序，同时是解析时的下标顺序。
@@ -30,7 +32,7 @@ const FIELD_HEX: &str = "%x1f";
 const FIELD_SEP: char = '\u{1f}';
 const RECORD_SEP: char = '\0';
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Commit {
     pub id: String,
@@ -42,6 +44,9 @@ pub struct Commit {
     pub body: String,
     pub merge: bool,
     pub revert: bool,
+    /// 父提交号。筛选态下图只按可见集合算泳道（§7.7），要拿到父才知道哪条边被截断了
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<String>,
     /// 这一条是不是 HEAD 当前所在的提交，含游离 HEAD（游离时没有任何具名引用指向它，
     /// 靠 refs 里找不出"当前"，所以这个标记不能省）
     pub head: bool,
@@ -56,51 +61,386 @@ pub struct Commit {
 #[serde(rename_all = "camelCase")]
 pub struct CommitPage {
     pub commits: Vec<Commit>,
-    /// HEAD 可达的提交总数，供分页与"共 N 条"使用
+    /// HEAD 可达的提交总数，供分页与"共 N 条"使用。带筛选时是 git 自己按同一组条件数的
     pub total: usize,
+    /// 只筛合规/不合规时，type 与判定在解析层做，只能一段段往前扫；
+    /// 扫到上限就停，置 true。界面据此说明"下面未必覆盖全量"，不假装扫完了。
+    #[serde(default)]
+    pub truncated: bool,
 }
 
+/// 提交列表的筛选条件（§7.7）。
+///
+/// 两种能力被刻意分开：**git 认识的条件**（rev 范围、作者、时间、关键词、路径）直接
+/// 映射成 `log` 的位置参数与 `--grep/--author/--since/--until`；**git 不认识的**
+/// （Conventional type、是否合规）在解析层过滤——git 不知道什么是合规提交。
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Filter {
+    /// rev 范围：分支名、`a..b`、`HEAD~3`。空则用 HEAD
+    pub rev: Option<String>,
+    pub authors: Vec<String>,
+    pub grep: Vec<String>,
+    /// 只看动过某个路径的提交
+    pub path: Option<String>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+    /// Conventional type 白名单（小写比对）。空 = 不限
+    pub types: Vec<String>,
+    /// Some(true) 只留合规，Some(false) 只留不合规，None 不限
+    pub conformant: Option<bool>,
+}
+
+impl Filter {
+    /// 没有任何条件时走"只带 skip/limit 的一次 log"，不做分片扫描。
+    pub fn is_empty(&self) -> bool {
+        self.rev.is_none()
+            && self.authors.is_empty()
+            && self.grep.is_empty()
+            && self.path.is_none()
+            && self.since.is_none()
+            && self.until.is_none()
+            && self.types.is_empty()
+            && self.conformant.is_none()
+    }
+
+    /// 解析层要动手了：这个 filter 不能一次交给 git 算完。
+    pub fn needs_post_filter(&self) -> bool {
+        !self.types.is_empty() || self.conformant.is_some()
+    }
+
+    /// 缓存键。图缓存按"可见集合"存，键里必须带上全部条件，否则换一个筛选
+    /// 就会拿到上一份可见集合算出来的泳道——那是最难发现的一类错图。
+    pub fn key(&self) -> String {
+        format!(
+            "rev={}|authors={}|grep={}|path={}|since={}|until={}|types={}|conformant={}",
+            self.rev.as_deref().unwrap_or("HEAD"),
+            self.authors.join(","),
+            self.grep.join(","),
+            self.path.as_deref().unwrap_or(""),
+            self.since.as_deref().unwrap_or(""),
+            self.until.as_deref().unwrap_or(""),
+            self.types.join(","),
+            match self.conformant {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "any",
+            },
+        )
+    }
+}
+
+/// 解析层筛选时一次从 git 取多少条。
+///
+/// 取多了不划算（一页 200 条命中率高时用不到），取少了进程数翻倍——所以取 500 条，
+/// 命中率高与命中低都不算离谱。
+const SCAN_CHUNK: usize = 500;
+/// 解析层筛选最多往前扫多少条。筛选得越窄，一次要扫的历史越长，不封顶就会变成
+/// "选一个罕见 type 等到界面转圈"。超了置 `truncated`，界面明说只扫了前一段。
+const SCAN_MAX_ROWS: usize = 50_000;
+
 /// 按 skip/limit 读一页提交。需求五第 9 条：10 万级仓库禁止全量拉取。
-pub fn list(repo: &Path, skip: usize, limit: usize) -> Result<CommitPage, GitError> {
+///
+/// `filter` 为空时就是原来那条路径：一次 `log` 带 `--skip/-n`。带筛选时：
+/// git 认识的条件交给 `log`/`rev-list`（总数也用它数，需求 7.7 要求两边一致），
+/// type 与合规判定在解析层做，所以要分片往前扫。
+///
+/// `spec` 只服务于合规判定；不筛合规时传什么都不会被读到。
+pub fn list(
+    repo: &Path,
+    skip: usize,
+    limit: usize,
+    filter: &Filter,
+    spec: &Spec,
+) -> Result<CommitPage, GitError> {
     // 空仓库没有 HEAD。这是需要区分的正常状态，不是错误——返回空页。
-    let head = process::run(Some(repo), &["rev-parse", "--verify", "-q", "HEAD"])?;
-    if !head.success {
+    if filter.rev.is_none() {
+        let head = process::run(Some(repo), &["rev-parse", "--verify", "-q", "HEAD"])?;
+        if !head.success {
+            return Ok(CommitPage {
+                commits: Vec::new(),
+                total: 0,
+                truncated: false,
+            });
+        }
+    }
+
+    let total = count(repo, filter)?;
+    let revision = filter.rev.clone().unwrap_or_else(|| "HEAD".to_string());
+
+    if !filter.needs_post_filter() {
+        let commits = log_window(repo, filter, &revision, skip, limit)?;
         return Ok(CommitPage {
-            commits: Vec::new(),
-            total: 0,
+            commits,
+            total,
+            truncated: false,
         });
     }
 
-    let count = process::run(Some(repo), &["rev-list", "--count", "HEAD"])?.expect_success()?;
-    let total = parse_count(count.trim())?;
+    let mut page = Vec::new();
+    let mut wanted = skip;
+    let mut scanned = 0usize;
+    let mut truncated = false;
 
+    while page.len() < limit {
+        let chunk = log_window(repo, filter, &revision, scanned, SCAN_CHUNK)?;
+        if chunk.is_empty() {
+            break;
+        }
+        scanned += chunk.len();
+        for commit in &chunk {
+            if !keeps(commit, filter, spec) {
+                continue;
+            }
+            if wanted > 0 {
+                wanted -= 1;
+                continue;
+            }
+            page.push(commit.clone());
+            if page.len() == limit {
+                break;
+            }
+        }
+        if scanned >= SCAN_MAX_ROWS {
+            truncated = true;
+            break;
+        }
+        // 最后一页本来就不满，再来一次只会拿到空结果
+        if chunk.len() < SCAN_CHUNK {
+            break;
+        }
+    }
+
+    Ok(CommitPage {
+        commits: page,
+        total,
+        truncated,
+    })
+}
+
+/// 筛选态下的可见集合，交给图算泳道（§7.7）。
+///
+/// **顺序必须是 `--topo-order`**：子一定在父之前。取的是可见集合的子集，
+/// topo 序的子集仍是 topo 序，所以图算得出来。被筛掉的父记成 `dangling`。
+pub fn visible_nodes(
+    repo: &Path,
+    filter: &Filter,
+    spec: &Spec,
+) -> Result<Vec<super::graph::Node>, GitError> {
+    let revision = filter.rev.clone().unwrap_or_else(|| "HEAD".to_string());
+    // 分片扫描上限与列表一致：两边的可见集合必须同一份，不能一个看到头一个看不到
+    let mut commits: Vec<Commit> = Vec::new();
+    let mut scanned = 0usize;
+    loop {
+        let chunk = log_window(repo, filter, &revision, scanned, SCAN_CHUNK)?;
+        if chunk.is_empty() {
+            break;
+        }
+        scanned += chunk.len();
+        commits.extend(
+            chunk
+                .iter()
+                .filter(|commit| keeps(commit, filter, spec))
+                .cloned(),
+        );
+        if scanned >= SCAN_MAX_ROWS || commits.len() >= SCAN_MAX_ROWS || chunk.len() < SCAN_CHUNK {
+            break;
+        }
+    }
+
+    let visible: std::collections::HashSet<&str> =
+        commits.iter().map(|commit| commit.id.as_str()).collect();
+    Ok(commits
+        .iter()
+        .map(|commit| super::graph::Node {
+            sha: commit.id.clone(),
+            parents: commit
+                .parents
+                .iter()
+                .filter(|parent| visible.contains(parent.as_str()))
+                .cloned()
+                .collect(),
+            dangling: commit
+                .parents
+                .iter()
+                .any(|parent| !visible.contains(parent.as_str())),
+        })
+        .collect())
+}
+
+/// 解析层判定：type 白名单 + 合规。git 不认这两样，所以只能在我们这边判。
+///
+/// 合规判定走 `check::evaluate`，与提交表单、commit-msg hook 共用同一份规则（需求 6.7）——
+/// 筛选出来的"合规"集合和表单里亮绿灯的必须是同一个定义。
+fn keeps(commit: &Commit, filter: &Filter, spec: &Spec) -> bool {
+    if !filter.types.is_empty() {
+        let Some(commit_type) = commit.summary.commit_type.as_deref() else {
+            return false;
+        };
+        if !filter
+            .types
+            .iter()
+            .any(|wanted| wanted.eq_ignore_ascii_case(commit_type))
+        {
+            return false;
+        }
+    }
+    match filter.conformant {
+        Some(wanted) => check::evaluate(spec, &commit.subject, &commit.body).conformant == wanted,
+        None => true,
+    }
+}
+
+/// 总数。必须带**同一组**筛选条件跑，否则"共 N 条"与实得条数对不上（需求 7.7）。
+///
+/// `rev-list` 不认 `--format/-n/--skip`，所以这里单独拼一套：git 认识的条件是一样的。
+fn count(repo: &Path, filter: &Filter) -> Result<usize, GitError> {
+    let revision = filter.rev.clone().unwrap_or_else(|| "HEAD".to_string());
+    let mut args = vec!["rev-list", "--count"];
+    args.extend(condition_args(filter));
+    args.push(revision.as_str());
+    if let Some(path) = filter.path.as_deref() {
+        args.push("--");
+        args.push(path);
+    }
+    let out = process::run(Some(repo), &args)?.expect_success()?;
+    parse_count(out.trim())
+}
+
+/// 一次 `log`，取 [offset, offset+limit) 这扇窗口。筛选条件原样传下去。
+fn log_window(
+    repo: &Path,
+    filter: &Filter,
+    revision: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<Commit>, GitError> {
     let format = format!("--format={}", FIELDS.join(FIELD_HEX));
-    let (skip_arg, limit_arg) = (skip.to_string(), limit.to_string());
+    let offset = offset.to_string();
+    let limit = limit.to_string();
+    let mut args = vec![
+        // --topo-order：子一定在父之前，且一条支线不被日期切散。
+        // 图列（git/graph.rs）按同一个顺序算泳道，两边顺序必须一致，
+        // 否则第 N 行的连线会接到隔壁那行身上。
+        "log",
+        "-z",
+        "--topo-order",
+        // 短形式下本地分支 feat/x 和远程 feat/x 长得一模一样（实测），
+        // 徽标要分得开类别就只有限定完整 refname 这一条路。
+        "--decorate=full",
+    ];
+    args.push(&format);
+    args.extend(condition_args(filter));
+    args.push("--skip");
+    args.push(&offset);
+    args.push("-n");
+    args.push(&limit);
+    args.push(revision);
+    if let Some(path) = filter.path.as_deref() {
+        args.push("--");
+        args.push(path);
+    }
+
+    let stdout = process::run(Some(repo), &args)?.expect_success()?;
+    parse(&stdout)
+}
+
+/// git 认识的那几项筛选。两个调用点（`log` / `rev-list`）共用，避免两边漏传一个条件
+/// 导致总数和列表对不上。
+fn condition_args(filter: &Filter) -> Vec<&str> {
+    let mut args = Vec::new();
+    for author in &filter.authors {
+        if author.trim().is_empty() {
+            continue;
+        }
+        args.push("--author");
+        args.push(author.as_str());
+    }
+    for keyword in &filter.grep {
+        if keyword.trim().is_empty() {
+            continue;
+        }
+        args.push("--grep");
+        args.push(keyword.as_str());
+    }
+    if let Some(since) = filter.since.as_deref().filter(|s| !s.trim().is_empty()) {
+        args.push("--since");
+        args.push(since);
+    }
+    if let Some(until) = filter.until.as_deref().filter(|s| !s.trim().is_empty()) {
+        args.push("--until");
+        args.push(until);
+    }
+    args
+}
+
+/// 读一条提交本身（标题/作者/正文/父）。
+///
+/// 列表页已经有行数据，不必再取一次；从文件历史、blame 这些"从别处跳过来"的地方
+/// 才会用到那里——那条提交不在已读出的那几页里，没有这一条就只有一个 sha 和一句标题。
+pub fn show(repo: &Path, sha: &str) -> Result<Commit, GitError> {
+    let format = format!("--format={}", FIELDS.join(FIELD_HEX));
     let stdout = process::run(
         Some(repo),
         &[
-            // --topo-order：子一定在父之前，且一条支线不被日期切散。
-            // 图列（git/graph.rs）按同一个顺序算泳道，两边顺序必须一致，
-            // 否则第 N 行的连线会接到隔壁那行身上。
             "log",
             "-z",
             "--topo-order",
-            // 短形式下本地分支 feat/x 和远程 feat/x 长得一模一样（实测），
-            // 徽标要分得开类别就只有限定完整 refname 这一条路。
             "--decorate=full",
             &format,
-            "--skip",
-            &skip_arg,
             "-n",
-            &limit_arg,
-            "HEAD",
+            "1",
+            sha,
+        ],
+    )?
+    .expect_success()?;
+
+    parse(&stdout)?
+        .into_iter()
+        .next()
+        .ok_or(GitError::ParseFailure {
+            snippet: process::snippet(&stdout),
+        })
+}
+
+/// 某个文件的全部改动（§7.6）。`--follow` 让历史跟着改名走，所以要一次只传一个路径。
+///
+/// 返回值结构与列表页一样（含总数与分页），界面上就当成一个筛窄了的列表用。
+pub fn file_history(
+    repo: &Path,
+    path: &str,
+    skip: usize,
+    limit: usize,
+) -> Result<CommitPage, GitError> {
+    let format = format!("--format={}", FIELDS.join(FIELD_HEX));
+    let offset = skip.to_string();
+    let count = limit.to_string();
+    let pathspec = format!(":(literal){path}");
+    let stdout = process::run(
+        Some(repo),
+        &[
+            "log",
+            "-z",
+            "--topo-order",
+            "--decorate=full",
+            "--follow",
+            &format,
+            "--skip",
+            &offset,
+            "-n",
+            &count,
+            "--",
+            &pathspec,
         ],
     )?
     .expect_success()?;
 
     Ok(CommitPage {
         commits: parse(&stdout)?,
-        total,
+        // --follow 的总数只能整个数出来（限制要跟着 --follow 一起用才有意义），
+        // 所以这里只报本页条数——"共 N 条"留给列表页说，文件历史页说"已列出多少条"
+        total: 0,
+        truncated: false,
     })
 }
 
@@ -139,6 +479,7 @@ fn parse_commit(record: &str) -> Result<Commit, GitError> {
         time,
         merge: parts[4].split_whitespace().count() > 1,
         revert,
+        parents: parts[4].split_whitespace().map(str::to_string).collect(),
         head,
         refs: badges,
         subject,
@@ -222,14 +563,40 @@ mod tests {
     }
 
     fn commit(dir: &Path, file: &str, msg: &str) {
-        fs::write(dir.join(file), format!("{file}\n")).expect("write");
+        commit_at(dir, file, msg, None);
+    }
+
+    /// 带指定作者/提交时间的提交（`date` 形如 `2020-01-02T03:04:05+08:00`）。
+    /// 靠 `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE` 环境变量注入，而 %at / %ct 读的就是它们。
+    fn commit_at(dir: &Path, file: &str, msg: &str, date: Option<&str>) {
+        // 内容里拼上标题：同一个文件反复提交时内容要变，否则第二次 commit 是空的
+        fs::write(dir.join(file), format!("{file}: {msg}\n")).expect("write");
         git_in(dir, &["add", file]);
-        git_in(dir, &["commit", "-q", "-m", msg]);
+        let args = vec!["commit", "-q", "-m", msg];
+        match date {
+            Some(date) => {
+                let out = process::run_with_env(
+                    Some(dir),
+                    &args,
+                    &[("GIT_AUTHOR_DATE", date), ("GIT_COMMITTER_DATE", date)],
+                )
+                .expect("spawn git");
+                assert!(out.success, "commit 失败：{}", out.stderr);
+            }
+            None => {
+                git_in(dir, &args);
+            }
+        }
+    }
+
+    /// 测试里绝大多数用例不筛选：给一个空 filter 与默认规范，
+    /// 让用例主体继续只关心分页与解析
+    fn plain(dir: &Path, skip: usize, limit: usize) -> CommitPage {
+        list(dir, skip, limit, &Filter::default(), &Spec::default()).expect("list ok")
     }
 
     fn subject_of(dir: &Path, skip: usize, limit: usize) -> Vec<String> {
-        list(dir, skip, limit)
-            .expect("list ok")
+        plain(dir, skip, limit)
             .commits
             .into_iter()
             .map(|c| c.subject)
@@ -239,7 +606,7 @@ mod tests {
     #[test]
     fn empty_repo_is_an_empty_page_not_an_error() {
         let dir = repo();
-        let page = list(dir.path(), 0, 200).expect("空仓库不该报错");
+        let page = plain(dir.path(), 0, 200);
         assert_eq!(page.total, 0);
         assert!(page.commits.is_empty());
     }
@@ -253,7 +620,7 @@ mod tests {
             "feat: 支持中文标题\n\n正文第一行\n正文第二行\n\nBREAKING CHANGE: 旧配置不再兼容\n",
         );
 
-        let page = list(dir.path(), 0, 200).expect("list ok");
+        let page = plain(dir.path(), 0, 200);
         assert_eq!(page.total, 1);
         let c = &page.commits[0];
         assert_eq!(c.subject, "feat: 支持中文标题");
@@ -279,7 +646,7 @@ mod tests {
             commit(dir.path(), &format!("f{i}.txt"), &format!("chore: 第{i}条"));
         }
 
-        let first = list(dir.path(), 0, 2).expect("first page");
+        let first = plain(dir.path(), 0, 2);
         assert_eq!(first.total, 3, "total 是全量条数，不是本页条数");
         assert_eq!(first.commits.len(), 2);
         assert_eq!(
@@ -303,7 +670,7 @@ mod tests {
             &["merge", "--no-ff", "-q", "-m", "chore: 合并支线", "side"],
         );
 
-        let page = list(dir.path(), 0, 10).expect("list ok");
+        let page = plain(dir.path(), 0, 10);
         let head = &page.commits[0];
         assert_eq!(head.subject, "chore: 合并支线");
         assert!(head.merge, "两个父提交的记录必须标成 merge");
@@ -328,12 +695,12 @@ mod tests {
             &["merge", "--no-ff", "-q", "-m", "chore: 合并支线", "side"],
         );
 
-        let page = list(dir.path(), 0, 10).expect("list ok");
+        let page = plain(dir.path(), 0, 10);
         let listed: Vec<&str> = page.commits.iter().map(|c| c.id.as_str()).collect();
         let walked: Vec<String> = crate::git::graph::history(dir.path())
             .expect("读父子")
             .into_iter()
-            .map(|(sha, _)| sha)
+            .map(|node| node.sha)
             .collect();
 
         assert_eq!(listed, walked, "分页列表和图走的不是同一个顺序");
@@ -347,7 +714,7 @@ mod tests {
         // git revert 不认短选项 -q（本机 git 2.54 实测 exit 129），只能用长形式
         git_in(dir.path(), &["revert", "--no-edit", "HEAD"]);
 
-        let page = list(dir.path(), 0, 10).expect("list ok");
+        let page = plain(dir.path(), 0, 10);
         assert!(
             page.commits[0].revert,
             "git revert 生成的 Revert \"...\" 应标记 revert"
@@ -458,7 +825,7 @@ mod tests {
         let current = git_in(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]);
         git_in(dir.path(), &["update-ref", "refs/remotes/origin/upstream", &head]);
 
-        let page = list(dir.path(), 0, 10).expect("list ok");
+        let page = plain(dir.path(), 0, 10);
         let top = &page.commits[0];
         assert!(top.head, "HEAD 那条要标当前");
         assert_eq!(top.refs.len(), 5, "实际徽标：{:?}", top.refs);
@@ -489,6 +856,285 @@ mod tests {
     /// 需求十第 2 步的验收（5 万 commit 首屏 < 1s）与十二节要求实测回填的数据。
     /// fixture 不进版本库，跑法：
     /// `GIT_TIDY_BENCH_REPO=<5万提交仓库> cargo test --release --lib -- --ignored --nocapture`
+    /// 带筛选的读法：给一组条件 + 一个规范，拿到一页结果
+    fn filtered_list(
+        dir: &Path,
+        filter: Filter,
+        spec: Spec,
+        skip: usize,
+        limit: usize,
+    ) -> CommitPage {
+        list(dir, skip, limit, &filter, &spec).expect("筛选读列表 ok")
+    }
+
+    #[test]
+    fn an_empty_filter_takes_the_single_process_path() {
+        assert!(Filter::default().is_empty());
+        assert!(!Filter {
+            grep: vec!["修复".into()],
+            ..Filter::default()
+        }
+        .is_empty());
+        assert!(
+            Filter {
+                conformant: Some(false),
+                ..Filter::default()
+            }
+            .needs_post_filter(),
+            "合规判定 git 不认识，必须在解析层做"
+        );
+        assert!(
+            !Filter {
+                grep: vec!["修复".into()],
+                ..Filter::default()
+            }
+            .needs_post_filter(),
+            "只有 git 不认识的条件下才需要解析层动手"
+        );
+    }
+
+    /// 需求 7.7 的硬要求："共 N 条"必须带同一组条件数
+    #[test]
+    fn the_total_counts_the_filtered_set_too() {
+        let dir = repo();
+        commit(dir.path(), "a.txt", "feat: 甲");
+        commit(dir.path(), "b.txt", "fix: 乙");
+        commit(dir.path(), "c.txt", "chore: 丙");
+
+        let all = filtered_list(dir.path(), Filter::default(), Spec::default(), 0, 10);
+        assert_eq!(all.total, 3);
+
+        let author = filtered_list(
+            dir.path(),
+            Filter {
+                authors: vec!["测试者".into()],
+                ..Filter::default()
+            },
+            Spec::default(),
+            0,
+            10,
+        );
+        assert_eq!(author.total, 3, "作者条件命中全部三条");
+        assert_eq!(author.commits.len(), 3);
+
+        let nobody = filtered_list(
+            dir.path(),
+            Filter {
+                authors: vec!["不存在的人".into()],
+                ..Filter::default()
+            },
+            Spec::default(),
+            0,
+            10,
+        );
+        assert_eq!(nobody.total, 0, "筛空的集合总数也该是 0，不能报全量");
+        assert!(nobody.commits.is_empty());
+    }
+
+    #[test]
+    fn keywords_reach_gits_own_grep() {
+        let dir = repo();
+        commit(dir.path(), "a.txt", "feat: 支持中文标题");
+        commit(dir.path(), "b.txt", "fix: 修一下另一个问题");
+
+        let page = filtered_list(
+            dir.path(),
+            Filter {
+                grep: vec!["中文".into()],
+                ..Filter::default()
+            },
+            Spec::default(),
+            0,
+            10,
+        );
+        assert_eq!(page.commits.len(), 1);
+        assert_eq!(page.commits[0].subject, "feat: 支持中文标题");
+        assert_eq!(page.total, 1);
+    }
+
+    /// 时间范围同样走 git 的 `--since/--until`，git 自己认这个格式
+    #[test]
+    fn a_time_window_is_passed_through_to_git() {
+        let dir = repo();
+        commit_at(dir.path(), "old.txt", "feat: 很早以前", Some("2020-01-02T03:04:05+00:00"));
+        commit_at(dir.path(), "new.txt", "feat: 最近", None);
+
+        let recent = filtered_list(
+            dir.path(),
+            Filter {
+                since: Some("2024-01-01".into()),
+                ..Filter::default()
+            },
+            Spec::default(),
+            0,
+            10,
+        );
+        assert_eq!(recent.commits.len(), 1, "只该命中最近那条");
+        assert_eq!(recent.commits[0].subject, "feat: 最近");
+        assert_eq!(recent.total, 1, "总数也要带同一组时间条件");
+
+        let old = filtered_list(
+            dir.path(),
+            Filter {
+                until: Some("2024-01-01".into()),
+                ..Filter::default()
+            },
+            Spec::default(),
+            0,
+            10,
+        );
+        assert_eq!(old.commits.len(), 1);
+        assert_eq!(old.commits[0].subject, "feat: 很早以前");
+    }
+
+    /// type 与合规是解析层过滤（git 不认识），所以翻页要跨着被筛掉的那些条目数
+    #[test]
+    fn type_and_conformance_are_filtered_while_paging() {
+        let dir = repo();
+        for subject in [
+            "feat: 甲",
+            "随手改的",
+            "fix: 乙",
+            "随手改的",
+            "chore: 丙",
+            "随手改的",
+        ] {
+            commit(dir.path(), "f.txt", subject);
+        }
+        let spec = Spec::default();
+
+        let feats = filtered_list(
+            dir.path(),
+            Filter {
+                types: vec!["feat".into()],
+                ..Filter::default()
+            },
+            spec.clone(),
+            0,
+            10,
+        );
+        assert_eq!(feats.total, 6, "总数是 git 数的那一组条件，type 不在里面");
+        assert_eq!(
+            feats.commits
+                .iter()
+                .map(|c| c.subject.as_str())
+                .collect::<Vec<_>>(),
+            vec!["feat: 甲"]
+        );
+
+        // 第二页要跨过三条非 feat 之后才拿得到下一条可见的
+        let fixes_page_two = filtered_list(
+            dir.path(),
+            Filter {
+                types: vec!["fix".into()],
+                ..Filter::default()
+            },
+            spec.clone(),
+            1,
+            10,
+        );
+        assert!(
+            fixes_page_two.commits.is_empty(),
+            "只有一条 fix，第二页就该是空的：{:?}",
+            fixes_page_two
+                .commits
+                .iter()
+                .map(|c| c.subject.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let conformant = filtered_list(
+            dir.path(),
+            Filter {
+                conformant: Some(true),
+                ..Filter::default()
+            },
+            spec.clone(),
+            0,
+            10,
+        );
+        assert_eq!(conformant.commits.len(), 3, "三条规范提交");
+
+        let bad = filtered_list(
+            dir.path(),
+            Filter {
+                conformant: Some(false),
+                ..Filter::default()
+            },
+            spec,
+            0,
+            10,
+        );
+        assert_eq!(bad.commits.len(), 3, "三条非规范提交");
+        assert!(bad.commits.iter().all(|c| c.summary.commit_type.is_none()));
+    }
+
+    /// 筛选后的可见集合拿去做图：子一定在父之前，被筛掉的父记成截断边
+    #[test]
+    fn the_visible_set_is_a_topological_walk_with_dangling_parents() {
+        let dir = repo();
+        commit(dir.path(), "a.txt", "feat: 基线");
+        commit(dir.path(), "b.txt", "随手改的");
+        git_in(dir.path(), &["checkout", "-q", "-b", "side"]);
+        commit(dir.path(), "c.txt", "随手改的");
+        git_in(dir.path(), &["checkout", "-q", "-"]);
+        commit(dir.path(), "d.txt", "feat: 乙");
+
+        let nodes = visible_nodes(
+            dir.path(),
+            &Filter {
+                types: vec!["feat".into()],
+                ..Filter::default()
+            },
+            &Spec::default(),
+        )
+        .expect("可见集合");
+
+        assert_eq!(nodes.len(), 2, "只有两条 feat 可见");
+        assert!(
+            nodes[0].dangling,
+            "最新那条的父是 side 上被筛掉的一条，所以那段边没有落点"
+        );
+        assert!(
+            !nodes[1].dangling,
+            "基线是根提交：它下面根本没有边可截断"
+        );
+        assert!(nodes[1].parents.is_empty());
+        assert!(
+            nodes.iter().all(|node| node.parents.iter().all(|parent| nodes
+                .iter()
+                .any(|other| &other.sha == parent))),
+            "可见节点里不该还挂着不可见的父"
+        );
+    }
+
+    /// 文件历史要跟着改名走（§7.6）：`--follow` 前后条数与 `git log --follow --stat` 一致
+    #[test]
+    fn a_file_history_follows_a_rename() {
+        let dir = repo();
+        commit(dir.path(), "old.txt", "feat: 改名之前");
+        git_in(dir.path(), &["mv", "old.txt", "new.txt"]);
+        git_in(dir.path(), &["commit", "-q", "-m", "refactor: 改了名字"]);
+        commit(dir.path(), "other.txt", "feat: 别的文件");
+
+        let page = file_history(dir.path(), "new.txt", 0, 50).expect("文件历史");
+        assert_eq!(
+            page.commits
+                .iter()
+                .map(|c| c.subject.as_str())
+                .collect::<Vec<_>>(),
+            vec!["refactor: 改了名字", "feat: 改名之前"],
+            "改名前后的改动都要在，同名文件的那条不该算进来"
+        );
+
+        // 带改名的路径不会误伤其他文件：文件名里的 * 不当通配
+        assert!(file_history(dir.path(), "other.txt", 0, 50)
+            .expect("文件历史")
+            .commits
+            .len()
+            == 1);
+    }
+
     #[test]
     #[ignore = "需要一个 5 万提交的本地 fixture 仓库"]
     fn first_page_on_a_large_repo_stays_under_a_second() {
@@ -498,7 +1144,7 @@ mod tests {
         let repo = Path::new(&path);
 
         let started = std::time::Instant::now();
-        let page = list(repo, 0, 200).expect("首屏读取");
+        let page = plain(repo, 0, 200);
         let elapsed = started.elapsed();
 
         assert_eq!(page.total, 50_000, "fixture 应当是 5 万提交");

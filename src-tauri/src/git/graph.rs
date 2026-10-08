@@ -15,6 +15,33 @@ pub struct Segment {
     pub to: usize,
     /// 泳道配色序号，同一条线一路到底都用同一个颜色
     pub color: usize,
+    /// 这一段的下面**没有可见的落点**：父提交被筛选条件挡掉了（§7.7）。
+    /// 前端把它画成一段向下的短截断线加一个端点，绝不硬连到隔壁行——
+    /// 连错一行比画不出这一段严重得多（用户会顺着线去找一条不存在的提交）。
+    #[serde(default)]
+    pub dangling: bool,
+}
+
+/// 一次图计算的输入：一个可见提交 + 它在**可见集合里**的父。
+///
+/// 筛选态下图只按可见集合算（§7.7），所以父列表可能是不全的：被筛掉的父不能进列表，
+/// 只能记成 `dangling`，由 `plan` 画成截断端点。
+#[derive(Clone, Debug)]
+pub struct Node {
+    pub sha: String,
+    pub parents: Vec<String>,
+    /// 至少有一个真实父提交不可见。不为假的行（未筛选）恒为 false。
+    pub dangling: bool,
+}
+
+impl Node {
+    pub fn new(sha: String, parents: Vec<String>) -> Self {
+        Self {
+            sha,
+            parents,
+            dangling: false,
+        }
+    }
 }
 
 /// 一行提交要画的图元。行高、列宽由前端定，这里只给几何关系。
@@ -47,13 +74,13 @@ pub fn head_sha(repo: &Path) -> Result<Option<String>, GitError> {
     Ok(looks_like_sha.then_some(sha.to_string()))
 }
 
-/// 全历史的 `(sha, 父列表)`，按 `--topo-order` 排——子一定在父之前。
+/// 全历史的父子节点，按 `--topo-order` 排——子一定在父之前。
 ///
 /// 泳道状态是从历史开头一路推下来的，第 N 页长什么样取决于前面所有页，
 /// 所以这里不分页：整条 HEAD 的父子关系一次读回来（只取 sha 和父指针，
 /// 不碰 subject/body，5 万提交也就几 MB）。列表那边也必须用同一个顺序，
 /// 否则同一行在列表和在图里不是同一条 commit。
-pub fn history(repo: &Path) -> Result<Vec<(String, Vec<String>)>, GitError> {
+pub fn history(repo: &Path) -> Result<Vec<Node>, GitError> {
     if head_sha(repo)?.is_none() {
         // 空仓库没有 HEAD，也就没有图
         return Ok(Vec::new());
@@ -70,7 +97,7 @@ pub fn history(repo: &Path) -> Result<Vec<(String, Vec<String>)>, GitError> {
 
 const FIELD_SEP: char = '\u{1f}';
 
-fn parse(raw: &str) -> Result<Vec<(String, Vec<String>)>, GitError> {
+fn parse(raw: &str) -> Result<Vec<Node>, GitError> {
     let mut entries = Vec::new();
     for record in raw.split('\0').filter(|record| !record.trim().is_empty()) {
         let Some((sha, parents)) = record.split_once(FIELD_SEP) else {
@@ -84,7 +111,7 @@ fn parse(raw: &str) -> Result<Vec<(String, Vec<String>)>, GitError> {
                 snippet: snippet(record),
             });
         }
-        entries.push((
+        entries.push(Node::new(
             sha.to_string(),
             parents.split_whitespace().map(str::to_string).collect(),
         ));
@@ -93,6 +120,8 @@ fn parse(raw: &str) -> Result<Vec<(String, Vec<String>)>, GitError> {
 }
 
 /// 顺序走完历史，算出每一行的泳道与连线。
+///
+/// 输入是 `Node` 列表：只有可见的父会在 `parents` 里，被筛掉的父由 `dangling` 标记。
 ///
 /// 规则与 git 自己的 `--graph` 一致：第一父继承本列（主线直下去），其余父提交各要一条
 /// 新泳道，从 commit 点弯出去；一条泳道的最后一个提交画完，这条泳道就空出来给后面的分叉复用。
@@ -109,7 +138,7 @@ fn parse(raw: &str) -> Result<Vec<(String, Vec<String>)>, GitError> {
 /// 换筛选都不改色；号涨过调色板长度才由前端取模循环（`CommitRow.vue` 的 `strokeColor`）。
 /// 每段线的颜色取它**落进的那一列**，线接到下面那个圆点时接口处就不换色——换了色等于
 /// 把一根线画成两段，看着和没画上一样。
-pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
+pub fn plan(entries: &[Node]) -> Vec<Row> {
     let mut lanes: Vec<Option<String>> = Vec::new();
     let mut colors: Vec<usize> = Vec::new();
     let mut rows = Vec::with_capacity(entries.len());
@@ -117,8 +146,8 @@ pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
     // 0 号是主线那支，之后每开一条支线取一个号，用过的不再发
     let mut next_color = 0usize;
 
-    for (sha, parents) in entries {
-        let (lane, incoming) = match lane_awaiting(&lanes, sha) {
+    for node in entries {
+        let (lane, incoming) = match lane_awaiting(&lanes, &node.sha) {
             Some(index) => (index, true),
             None => {
                 // 没人在等它：要么是整个图的起点（HEAD），要么是一段独立历史。另起一支色号。
@@ -129,7 +158,7 @@ pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
         };
         let color = colors[lane];
         // 主线那支颜色说了算：它汇入别的列时把那列刷成主线的颜色，支线汇进主线时不动主线
-        let on_main_line = main_chain.contains(sha.as_str());
+        let on_main_line = main_chain.contains(node.sha.as_str());
         let mut segments = Vec::new();
 
         for index in 0..lanes.len() {
@@ -138,11 +167,12 @@ pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
             }
             // 不变量：同一时刻不会有两列在等同一个 commit（分配父指针时先查过 lane_awaiting）。
             // 万一被破坏，那条线在本行汇入 commit 收尾，而不是永远直着往下走。
-            let converges = lanes[index].as_deref() == Some(sha.as_str());
+            let converges = lanes[index].as_deref() == Some(node.sha.as_str());
             segments.push(Segment {
                 from: index,
                 to: if converges { lane } else { index },
                 color: colors[index],
+                dangling: false,
             });
             if converges {
                 lanes[index] = None;
@@ -151,7 +181,7 @@ pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
         // 本列在 commit 点断开，下面按父指针重新接
         lanes[lane] = None;
 
-        for (index, parent) in parents.iter().enumerate() {
+        for (index, parent) in node.parents.iter().enumerate() {
             let (target, queued) = match lane_awaiting(&lanes, parent) {
                 // 已经有列在等它：这段线弯进那一列，本行不给它开新列
                 Some(waiting) => (waiting, true),
@@ -179,6 +209,20 @@ pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
                 from: lane,
                 to: target,
                 color: colors[target],
+                dangling: false,
+            });
+        }
+
+        // 被筛掉的父：这段边没有落点。给它一条独占的泳道 + 一支新色号，标成截断端点。
+        // 绝不复用任何现有列——接到隔壁行上，用户会顺着它去找一条根本没显示的提交。
+        if node.dangling {
+            let target = open_lane_excluding(&mut lanes, &mut colors, lane);
+            colors[target] = take_color(&mut next_color);
+            segments.push(Segment {
+                from: lane,
+                to: target,
+                color: colors[target],
+                dangling: true,
             });
         }
 
@@ -189,7 +233,7 @@ pub fn plan(entries: &[(String, Vec<String>)]) -> Vec<Row> {
         }
         segments.sort_by_key(|segment| segment.from);
         rows.push(Row {
-            sha: sha.clone(),
+            sha: node.sha.clone(),
             lane,
             color,
             incoming,
@@ -232,6 +276,33 @@ pub fn width(rows: &[Row]) -> usize {
     })
 }
 
+/// 截断边用的列：走空位复用，但**跳过本行刚腾出来的那一列**。
+///
+/// 两个理由：
+/// - 复用本行那一列的话，那段线看起来就是从圆点直着下去接下一行，
+///   正是要避开的"连错提交"；
+/// - 永远新开一列也不行：被筛掉的父可能出现在很多行上，每行多一列，
+///   图列宽度会随筛选结果的长度一起涨（需求 7.2 的"列宽一次定死"就破了）。
+///   这一列不被任何提交占着，后面的行照样能复用它，所以列宽只由"同时在画的分支数"决定。
+fn open_lane_excluding(
+    lanes: &mut Vec<Option<String>>,
+    colors: &mut Vec<usize>,
+    skip: usize,
+) -> usize {
+    let free = lanes
+        .iter()
+        .position(|lane| lane.is_none())
+        .filter(|index| *index != skip);
+    match free {
+        Some(index) => index,
+        None => {
+            lanes.push(None);
+            colors.push(0);
+            lanes.len() - 1
+        }
+    }
+}
+
 fn open_lane(lanes: &mut Vec<Option<String>>, colors: &mut Vec<usize>) -> usize {
     match lanes.iter().position(Option::is_none) {
         Some(free) => free,
@@ -247,15 +318,15 @@ fn open_lane(lanes: &mut Vec<Option<String>>, colors: &mut Vec<usize>) -> usize 
 ///
 /// 输入已经是 `--topo-order`：子一定排在父之前，所以一遍扫过去、把已在链上的提交的
 /// 第一父依次收进来就够了，不用回跳也不用建索引。
-fn main_line(entries: &[(String, Vec<String>)]) -> HashSet<&str> {
+fn main_line(entries: &[Node]) -> HashSet<&str> {
     let mut chain: HashSet<&str> = HashSet::new();
-    for (index, (sha, parents)) in entries.iter().enumerate() {
+    for (index, node) in entries.iter().enumerate() {
         // 第 0 条是 HEAD（整张图的起点），之后只认已经挂在链上的那些提交
-        if index > 0 && !chain.contains(sha.as_str()) {
+        if index > 0 && !chain.contains(node.sha.as_str()) {
             continue;
         }
-        chain.insert(sha.as_str());
-        if let Some(first) = parents.first() {
+        chain.insert(node.sha.as_str());
+        if let Some(first) = node.parents.first() {
             chain.insert(first.as_str());
         }
     }
@@ -290,13 +361,24 @@ mod tests {
     use super::*;
 
     /// 测试里用短名字就够了：plan 只比较字符串相等，不关心它是不是真的 sha
-    fn entries(spec: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+    fn entries(spec: &[(&str, &[&str])]) -> Vec<Node> {
         spec.iter()
             .map(|(sha, parents)| {
-                (
+                Node::new(
                     (*sha).to_string(),
                     parents.iter().map(|parent| (*parent).to_string()).collect(),
                 )
+            })
+            .collect()
+    }
+
+    /// 筛选态的 fixture：可见集合里少了几条，父被筛掉的行用 dangling 标记
+    fn filtered(spec: &[(&str, &[&str], bool)]) -> Vec<Node> {
+        spec.iter()
+            .map(|(sha, parents, dangling)| Node {
+                sha: (*sha).to_string(),
+                parents: parents.iter().map(|parent| (*parent).to_string()).collect(),
+                dangling: *dangling,
             })
             .collect()
     }
@@ -527,9 +609,9 @@ mod tests {
     /// 图的连边一段都不能少：每个父提交都要有一根从本行圆点出发、落在它所在泳道底部的线。
     /// 这条以前没查，正好放过了"父提交已经在别的列排着队就整个跳过"的画法——
     /// 那种行看着像根提交，菱形和交叉合并都会踩到。
-    fn assert_every_parent_is_drawn_from_its_child(rows: &[Row], walk: &[(String, Vec<String>)]) {
+    fn assert_every_parent_is_drawn_from_its_child(rows: &[Row], walk: &[Node]) {
         for (index, row) in rows.iter().enumerate() {
-            for (position, parent) in walk[index].1.iter().enumerate() {
+            for (position, parent) in walk[index].parents.iter().enumerate() {
                 let below = rows
                     .iter()
                     .position(|later| &later.sha == parent)
@@ -566,7 +648,7 @@ mod tests {
     /// 配色按分支走，两条底线：主线一支颜色走到底；同时在用的泳道不许撞色。
     /// 前者破了就是"某次汇入把主线的颜色抢给了支线"（菱形、交叉合并都会踩到），
     /// 后者破了就是两条线看着像同一条。
-    fn assert_colors_follow_branches(rows: &[Row], walk: &[(String, Vec<String>)]) {
+    fn assert_colors_follow_branches(rows: &[Row], walk: &[Node]) {
         let chain = main_line(walk);
         let main: Vec<usize> = rows
             .iter()
@@ -663,6 +745,44 @@ mod tests {
         rows.iter().map(|row| row.sha.as_str()).collect()
     }
 
+    /// §7.7 验收：关键词筛选命中"父被筛掉"的分支时画的是截断端点，不是接错的行。
+    /// 三条可见提交 c、b、a，b 的父是看不见的 x（dangling），
+    /// a 的父 b 可见。b 那一行必须多出一段 dangling 段，而且不能连到 a 那一行。
+    #[test]
+    fn a_filtered_out_parent_becomes_a_dangling_stub() {
+        let walk = filtered(&[("c", &["b"], false), ("b", &[], true), ("a", &[], false)]);
+        let rows = plan(&walk);
+
+        let stub = rows[1]
+            .segments
+            .iter()
+            .find(|segment| segment.dangling)
+            .expect("父被筛掉的那一行要有一段截断边");
+        assert_eq!(stub.from, rows[1].lane, "截断边从本行圆点出发");
+        assert_ne!(
+            stub.to,
+            rows[2].lane,
+            "截断边不能落到下一行那一列——那就是连错提交"
+        );
+        assert!(
+            !rows.iter().skip(1).any(|row| row.segments.iter().any(|s| !s.dangling && s.to == stub.to)),
+            "截断边那一列下面不该再有竖线接着"
+        );
+        assert!(
+            width(&rows) >= 2,
+            "截断边要独占一条泳道，否则会和别人的线混在一列"
+        );
+        assert!(rows.iter().all(|row| row.sha != "x"), "被筛掉的提交不该出现在图里");
+    }
+
+    /// 未筛选的历史里不出现任何截断边：它是筛选态才有的画法
+    #[test]
+    fn an_unfiltered_walk_has_no_dangling_segment() {
+        let rows = plan(&entries(&[("b", &["a"]), ("a", &[])]));
+        assert!(rows.iter().all(|row| row.segments.iter().all(|s| !s.dangling)));
+        assert_eq!(lanes_of(&rows[0]), vec![(0, 0)]);
+    }
+
     #[test]
     fn a_repo_with_no_head_has_no_graph() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -723,7 +843,7 @@ mod tests {
 
         let history = history(repo).expect("读历史");
         assert_eq!(history.len(), 5, "基线 3 条 + 支线 1 条 + 合并 1 条");
-        assert_eq!(history[0].1.len(), 2, "第一行是合并提交，两个父");
+        assert_eq!(history[0].parents.len(), 2, "第一行是合并提交，两个父");
         let rows = plan(&history);
         assert_eq!(rows.len(), history.len());
         assert!(width(&rows) >= 2, "有分叉就该至少两条泳道");
@@ -767,7 +887,8 @@ mod tests {
             .expect("刚提交完应有 HEAD");
         assert_eq!(sha.len(), 40, "缓存键必须是完整 sha");
         assert_eq!(
-            history(repo).expect("读历史")[0].0, sha,
+            history(repo).expect("读历史")[0].sha,
+            sha,
             "--topo-order 的第一行应该就是 HEAD"
         );
     }
@@ -796,8 +917,9 @@ mod tests {
         let second = "1c8d2f0a3b4c5d6e7f8091a2b3c4d5e6f7a8b9c0";
         let parsed = parse(format!("{sha}{FIELD_SEP}{first} {second}\0").as_str()).expect("该解析成功");
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].0, sha);
-        assert_eq!(parsed[0].1, vec![first.to_string(), second.to_string()]);
+        assert_eq!(parsed[0].sha, sha);
+        assert_eq!(parsed[0].parents, vec![first.to_string(), second.to_string()]);
+        assert!(!parsed[0].dangling, "未筛选的历史没有截断边");
     }
 
     #[test]
@@ -806,8 +928,11 @@ mod tests {
         let sha = "d17a5a3aa7ad14e4b6ddc4bb2b7cd2a25a0e0aa5";
         let parsed = parse(format!("{sha}{FIELD_SEP}\0").as_str()).expect("该解析成功");
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].0, sha);
-        assert!(parsed[0].1.is_empty(), "没有父指针就是空列表，不该有个空串");
+        assert_eq!(parsed[0].sha, sha);
+        assert!(
+            parsed[0].parents.is_empty(),
+            "没有父指针就是空列表，不该有个空串"
+        );
     }
 
     /// 需求十第 2 步的"5 万提交首屏 < 1s"因为图视图被拆成两段：

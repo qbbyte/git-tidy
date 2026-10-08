@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { NAlert, NButton, NEmpty, NSpace, NSpin, NVirtualList } from "naive-ui";
 import CommitRow from "@/components/CommitRow.vue";
 import CommitDetail from "@/components/CommitDetail.vue";
+import FilterBar from "@/components/FilterBar.vue";
 import { useCommitStore } from "@/stores/commits";
 import { useDetailStore } from "@/stores/detail";
 import { useReposStore } from "@/stores/repos";
+import { specFor } from "@/api/spec";
+import type { CommitFilter } from "@/api/commit";
 
 /**
  * 历史页：仓库由常驻侧栏选，这里左半是当前仓库的提交列表 + 图列，右半是选中提交的
@@ -17,12 +20,33 @@ const detail = useDetailStore();
 
 const repoId = computed(() => repos.currentId);
 
-/** 右半边的标题用列表里那条提交本身，不再为它单取一次（行数据已经全在这儿了） */
+/**
+ * 右半边的标题用列表里那条提交本身，不再为它单取一次（行数据已经全在这儿了）。
+ * 列表里没有它（从文件历史/blame 跳过来的提交）时用详情状态里单取的那条。
+ */
 const selectedCommit = computed(() => {
   const sha = detail.sha;
   if (sha === null) return null;
-  return commitStore.commits.find((commit) => commit.id === sha) ?? null;
+  return commitStore.commits.find((commit) => commit.id === sha) ?? detail.row;
 });
+
+/** 筛选条的 type 候选。与提交表单读的是同一份规范（需求 6.7） */
+const typeOptions = ref<string[]>([]);
+
+/** 规范读不到时给 Conventional Commits 的常规几类：下拉空着比给一份无关的清单更糟 */
+const FALLBACK_TYPES = [
+  "feat",
+  "fix",
+  "docs",
+  "refactor",
+  "style",
+  "test",
+  "perf",
+  "build",
+  "ci",
+  "chore",
+  "revert",
+];
 
 /** 已经画出来的行。翻页失败时用它决定"整页报错"还是"列表照留、只在底部报错" */
 const hasRows = computed(() => commitStore.commits.length > 0);
@@ -43,12 +67,41 @@ function onScroll(event: Event) {
 
 /** 再点一次同一条就收起右半边：一屏两栏时，右半占的地方不该由一次误点长期占着 */
 function pick(sha: string) {
+  const commit = commitStore.commits.find((item) => item.id === sha) ?? null;
   if (detail.sha === sha) {
     detail.close();
     return;
   }
   if (repoId.value === null) return;
-  detail.open(repoId.value, sha);
+  void detail.open(repoId.value, sha, commit);
+}
+
+/** 换筛选：列表与图一起按新的可见集合重算（§7.7） */
+function applyFilter(next: CommitFilter) {
+  if (repoId.value === null) return;
+  // 换集合后原来选中的那条很可能不在里面了，右半边一起收掉
+  detail.close();
+  void commitStore.applyFilter(repoId.value, next);
+}
+
+function clearFilter() {
+  if (repoId.value === null) return;
+  detail.close();
+  void commitStore.clearFilter(repoId.value);
+}
+
+/** 筛选项里的 type 候选直接来自仓库规范，与提交表单、报告共用同一份尺子 */
+async function loadTypes() {
+  const id = repoId.value;
+  if (id === null) return;
+  try {
+    const spec = await specFor(id);
+    if (repoId.value !== id) return;
+    typeOptions.value = spec.types.length > 0 ? [...spec.types] : [...FALLBACK_TYPES];
+  } catch {
+    if (repoId.value !== id) return;
+    typeOptions.value = [...FALLBACK_TYPES];
+  }
 }
 
 onMounted(async () => {
@@ -56,13 +109,18 @@ onMounted(async () => {
   if (repos.repos.length === 0) await repos.load();
   // 上一次离开这一页时选中的那条不该跟着过来：清单和 diff 都按提交号取
   detail.close();
-  if (repoId.value !== null) commitStore.open(repoId.value);
+  if (repoId.value !== null) {
+    void commitStore.open(repoId.value);
+    void loadTypes();
+  }
 });
 
 /** 页签常驻，切仓库不会重新挂载：不盯住 currentId 的话列表会停在旧仓库上 */
 watch(repoId, (id) => {
   detail.close();
-  if (id !== null) commitStore.open(id);
+  if (id === null) return;
+  void commitStore.open(id);
+  void loadTypes();
 });
 </script>
 
@@ -81,7 +139,24 @@ watch(repoId, (id) => {
           已读出 {{ commitStore.commits.length }} 条
         </span>
         <span v-if="commitStore.graphLoading" class="muted">历史走向读取中…</span>
+        <!--
+          解析层筛选（type / 合规）要分段扫历史，扫到上限时 Rust 会置位。
+          这时候“共 N 条”与实得条数可能对不上，必须写明，不能让人以为那就是全部。
+        -->
+        <span v-if="commitStore.truncated" class="scanned muted">
+          只扫了历史的前一段，下面可能还有
+        </span>
       </div>
+
+      <filter-bar
+        v-if="repoId !== null"
+        :filter="commitStore.filter"
+        :refs="repos.refs"
+        :types="typeOptions"
+        :busy="commitStore.loading"
+        @apply="applyFilter"
+        @clear="clearFilter"
+      />
 
       <div class="split">
         <section class="list-pane">
@@ -203,6 +278,11 @@ watch(repoId, (id) => {
 .muted {
   font-size: 12px;
   opacity: 0.7;
+}
+
+.scanned {
+  color: #8a5a00;
+  opacity: 1;
 }
 
 .graph-waiting {

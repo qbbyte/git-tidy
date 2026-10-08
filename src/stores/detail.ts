@@ -1,6 +1,7 @@
 import { ref, shallowRef } from "vue";
 import { defineStore } from "pinia";
 import { GitTidyError } from "@/api/client";
+import { showCommit } from "@/api/commit";
 import {
   fetchDetail,
   fetchDiff,
@@ -8,6 +9,7 @@ import {
   type Detail,
   type Diff,
 } from "@/api/detail";
+import type { Commit } from "@/api/commit";
 
 function wrap(err: unknown): GitTidyError {
   return err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
@@ -21,8 +23,16 @@ function wrap(err: unknown): GitTidyError {
  */
 export const useDetailStore = defineStore("detail", () => {
   const sha = ref<string | null>(null);
+  /**
+   * 这一条的行数据。列表页里选中的提交直接用它（列表里已经全有了）；
+   * 从文件历史/blame 跳过来的提交不在列表里，那就单独取一次——没有它，
+   * 那一栏只剩一个 sha，没有标题与作者。
+   */
+  const row = shallowRef<Commit | null>(null);
   const detail = shallowRef<Detail | null>(null);
   const loading = ref(false);
+  const rowLoading = ref(false);
+  const rowError = ref<GitTidyError | null>(null);
   const error = ref<GitTidyError | null>(null);
 
   const file = shallowRef<Change | null>(null);
@@ -35,21 +45,31 @@ export const useDetailStore = defineStore("detail", () => {
 
   let detailSeq = 0;
   let diffSeq = 0;
+  let rowSeq = 0;
 
-  /** 选中的提交换了：清单和 diff 一起作废，等新的落地 */
-  async function open(repoId: number, commitSha: string | null) {
+  /**
+   * 选中的提交换了：清单和 diff 一起作废，等新的落地。
+   *
+   * `known` 是列表里那一条行数据。给了就用，不额外起进程；不给（比如从文件历史跳过来）
+   * 才去取一条——那一次多出来的 IPC 只发生在跳转路径上，不在高频的列表点选上。
+   */
+  async function open(repoId: number, commitSha: string | null, known: Commit | null = null) {
     const mine = ++detailSeq;
     ++diffSeq;
+    ++rowSeq;
     sha.value = commitSha;
     detail.value = null;
     error.value = null;
     file.value = null;
     diff.value = null;
     diffError.value = null;
+    row.value = known;
+    rowError.value = null;
     if (commitSha === null) {
       loading.value = false;
       return;
     }
+    if (known === null) void loadRow(repoId, commitSha, mine);
     loading.value = true;
     try {
       const got = await fetchDetail(repoId, commitSha);
@@ -61,6 +81,21 @@ export const useDetailStore = defineStore("detail", () => {
       error.value = wrap(err);
     } finally {
       if (mine === detailSeq) loading.value = false;
+    }
+  }
+
+  /** 单独取一条提交的行数据。拿不到不算详情失败：清单照样读得出来 */
+  async function loadRow(repoId: number, commitSha: string, mine: number) {
+    rowLoading.value = true;
+    try {
+      const got = await showCommit(repoId, commitSha);
+      if (mine !== rowSeq) return;
+      row.value = got;
+    } catch (err) {
+      if (mine !== rowSeq) return;
+      rowError.value = wrap(err);
+    } finally {
+      if (mine === rowSeq) rowLoading.value = false;
     }
   }
 
@@ -100,11 +135,14 @@ export const useDetailStore = defineStore("detail", () => {
     return Promise.resolve();
   }
 
-  /** 换仓库、或列表里一条都选不上时用。两个序号都要推一次，让在飞的响应落地时对不上号 */
+  /** 换仓库、或列表里一条都选不上时用。三个序号都要推一次，让在飞的响应落地时对不上号 */
   function close() {
     ++detailSeq;
     ++diffSeq;
+    ++rowSeq;
     sha.value = null;
+    row.value = null;
+    rowError.value = null;
     detail.value = null;
     error.value = null;
     file.value = null;
@@ -116,6 +154,9 @@ export const useDetailStore = defineStore("detail", () => {
 
   return {
     sha,
+    row,
+    rowLoading,
+    rowError,
     detail,
     loading,
     error,

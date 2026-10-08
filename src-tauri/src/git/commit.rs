@@ -80,7 +80,7 @@ pub fn create(repo: &Path, spec: &Spec, draft: &Draft) -> Result<Commit, GitErro
     committed?.expect_success()?;
 
     // 读回来而不是把我写进去的那份还回去：commit-msg 钩子有权改写提交信息
-    let page = log::list(repo, 0, 1)?;
+    let page = log::list(repo, 0, 1, &log::Filter::default(), &Spec::default())?;
     page.commits
         .into_iter()
         .next()

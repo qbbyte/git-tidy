@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use tauri::Manager;
 
@@ -33,9 +33,14 @@ pub fn run() {
             commands::repo::files_stage,
             commands::repo::files_unstage,
             commands::commit::commit_list,
+            commands::commit::commit_show,
             commands::commit::commit_create,
             commands::detail::commit_detail,
             commands::diff::commit_file_diff,
+            commands::file::file_blame,
+            commands::file::file_history,
+            commands::file::file_tree,
+            commands::file::file_content,
             commands::graph::commit_graph,
             commands::refs::refs_scan,
             commands::spec::spec_for,

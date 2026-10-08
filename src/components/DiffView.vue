@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { NAlert, NButton, NEmpty, NSpin } from "naive-ui";
+import { computed, ref, watch } from "vue";
+import { NAlert, NButton, NEmpty, NRadioButton, NRadioGroup, NSpin } from "naive-ui";
 import { formatBytes, formatDelta } from "@/format";
 import { GitTidyError } from "@/api/client";
 import type { Diff, Hunk, Line, LineKind, Blob as ImageBlob } from "@/api/detail";
@@ -198,6 +198,127 @@ const oldImage = computed(() => props.diff?.images?.old ?? null);
 const newImage = computed(() => props.diff?.images?.new ?? null);
 
 /**
+ * 图片怎么看。三种画法同一份字节（§7.5）：
+ * - 并排：两侧各摆一栏，回答“各自长什么样”；
+ * - 滑动：两张叠在一起、一条可拖的分割线，回答“同一位置差多少”——像素级对位靠的是
+ *   两张图都按同一尺寸缩放，而不是靠用户对齐；
+ * - 叠加：改动前打冷色、改动后打暖色叠在一起，差得多的地方颜色重。
+ *
+ * 叠加那一档是**像素差**：同一坐标两边颜色差得越多，就越亮。没有哪一边时退化成纯色底，
+ * 因为“只有一张图”时叠出来没有意义。像素循环放在前端而不在 Rust 侧：那是一次
+ * 几百 KB 位图的计算，留在渲染线程里比跨一次 IPC 传像素数组便宜。
+ */
+type ImageMode = "side" | "swipe" | "blend";
+
+const imageMode = ref<ImageMode>("side");
+const swipePercent = ref(50);
+
+const IMAGE_MODES: { value: ImageMode; label: string; hint: string }[] = [
+  { value: "side", label: "并排", hint: "两侧各看各的" },
+  { value: "swipe", label: "滑动", hint: "拖动分割线对位同一处" },
+  { value: "blend", label: "叠加", hint: "差异像素越亮，改得越多" },
+];
+
+/**
+ * 叠加图（热力图），算好之后是一张 data URL。
+ *
+ * 为什么放前端：它是对一张几百 KB 位图的一次像素计算，而字节已经在前端的 base64 里，
+ * 为此再跨一次 IPC 传像素数组比自己算还贵。
+ *
+ * 两侧尺寸不同就退化成 `null`（界面回到并排）：把不同尺寸的图硬拉到同一个网格上，
+ * “差异”里就混进了缩放带来的差异，那不是这次提交改的。
+ */
+const blendedUrl = ref<string | null>(null);
+const blendPending = ref(false);
+
+async function computeBlend(oldSide: ImageBlob, newSide: ImageBlob) {
+  blendPending.value = true;
+  try {
+    const [left, right] = await Promise.all([load(oldSide), load(newSide)]);
+    if (left === null || right === null) return null;
+    const width = Math.min(left.width, right.width);
+    const height = Math.min(left.height, right.height);
+    if (width === 0 || height === 0) return null;
+    const leftPixels = pixelsOf(left, width, height);
+    const rightPixels = pixelsOf(right, width, height);
+    if (leftPixels === null || rightPixels === null) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) return null;
+    const out = ctx.createImageData(width, height);
+    for (let index = 0; index < out.data.length; index += 4) {
+      // 三个通道取最大差值当热度：只算亮度会把“亮度没变但颜色变了”判成没改
+      const heat = Math.min(
+        255,
+        Math.max(
+          Math.abs(leftPixels[index] - rightPixels[index]),
+          Math.abs(leftPixels[index + 1] - rightPixels[index + 1]),
+          Math.abs(leftPixels[index + 2] - rightPixels[index + 2]),
+        ),
+      );
+      out.data[index] = heat;
+      out.data[index + 1] = heat;
+      out.data[index + 2] = heat;
+      // 热度 0 也留一丝不透明：纯黑看着像“被改了”，其实那是没改的地方
+      out.data[index + 3] = 255;
+    }
+    ctx.putImageData(out, 0, 0);
+    return canvas.toDataURL("image/png");
+  } catch {
+    // 画布被环境限制（没开 GPU、无 2D 上下文）时不该把整个视图拖没，退回并排
+    return null;
+  } finally {
+    blendPending.value = false;
+  }
+}
+
+function load(blob: ImageBlob): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    // data URL 极少失败；真失败就退回并排，不弹错
+    image.onerror = () => resolve(null);
+    image.src = dataUrl(blob);
+  });
+}
+
+function pixelsOf(
+  image: HTMLImageElement,
+  width: number,
+  height: number,
+): Uint8ClampedArray | null {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (ctx === null) return null;
+  ctx.drawImage(image, 0, 0, width, height);
+  return ctx.getImageData(0, 0, width, height).data;
+}
+
+// 两侧图片一到就先把叠加图算好：用户点“叠加”时不用等这一次计算
+watch(
+  [oldImage, newImage],
+  async ([left, right]) => {
+    blendedUrl.value = null;
+    if (left === null || right === null) return;
+    blendedUrl.value = await computeBlend(left, right);
+  },
+  { immediate: true },
+);
+
+/** 切到别的文件时滑块回到中间：留着上一个文件的位置会让人以为这里也是那么切 */
+watch(
+  () => props.diff?.path,
+  () => {
+    swipePercent.value = 50;
+  },
+);
+
+/**
  * 上面这一串 `?? ` 兜底不是防御性编程，是为了模板里的类型：prop 是 `Diff | null`，
  * 而"这一段只在非 null 时才渲染"这件事模板条件表达不出来（vue-tsc 认不认得到那层
  * 嵌套全看代码生成怎么写）。宁可多写几行确定的，也不赌它。
@@ -229,22 +350,92 @@ const stats = computed(() => {
 
     <template v-else-if="diff">
       <!--
-        图片只并排看。滑动对比和差异叠加要的是同一份字节摆两次，等这个视图用顺了再加，
-        现在先不占这块地方（§7.5 的取舍）。
+        图片三种看法（§7.5）：并排 / 滑动对位 / 差异叠加。
+        三种用同一份字节：Rust 侧一次 cat-file 取回两个 blob 内联成 data URL，
+        这里不再取第二次。
       -->
-      <div v-if="render === 'image'" class="images">
-        <figure class="image">
-          <figcaption>改动前</figcaption>
-          <img v-if="oldImage" :src="dataUrl(oldImage)" :alt="filePath" />
-          <span v-else class="muted">这一侧没有文件</span>
-          <div class="muted">{{ formatBytes(oldSize) }}</div>
-        </figure>
-        <figure class="image">
-          <figcaption>改动后</figcaption>
-          <img v-if="newImage" :src="dataUrl(newImage)" :alt="filePath" />
-          <span v-else class="muted">这一侧没有文件</span>
-          <div class="muted">{{ formatBytes(newSize) }}</div>
-        </figure>
+      <div v-if="render === 'image'" class="image-pane">
+        <div class="mode-bar">
+          <n-radio-group v-model:value="imageMode" size="small">
+            <n-radio-button
+              v-for="mode in IMAGE_MODES"
+              :key="mode.value"
+              :value="mode.value"
+              :title="mode.hint"
+              >{{ mode.label }}</n-radio-button
+            >
+          </n-radio-group>
+          <span class="muted">{{ IMAGE_MODES.find((m) => m.value === imageMode)?.hint }}</span>
+          <span v-if="blendPending" class="muted">差异图计算中…</span>
+          <!-- 叠加算不出来时（尺寸不同、画布不可用）明说，不让人以为“没差异” -->
+          <span v-else-if="imageMode === 'blend' && blendedUrl === null" class="muted">
+            两张图尺寸不同或无法比较，退回并排
+          </span>
+        </div>
+
+        <div v-if="imageMode === 'side'" class="images">
+          <figure class="image">
+            <figcaption>改动前</figcaption>
+            <img v-if="oldImage" :src="dataUrl(oldImage)" :alt="filePath" />
+            <span v-else class="muted">这一侧没有文件</span>
+            <div class="muted">{{ formatBytes(oldSize) }}</div>
+          </figure>
+          <figure class="image">
+            <figcaption>改动后</figcaption>
+            <img v-if="newImage" :src="dataUrl(newImage)" :alt="filePath" />
+            <span v-else class="muted">这一侧没有文件</span>
+            <div class="muted">{{ formatBytes(newSize) }}</div>
+          </figure>
+        </div>
+
+        <!--
+          滑动对比：两张图叠在同一格里，用 clip-path 裁出分割线左边的旧图。
+          不用两个半透明层叠加：透明度会让颜色失真，而这里的用途就是比颜色。
+        -->
+        <div
+          v-else-if="imageMode === 'swipe' && oldImage && newImage"
+          class="swipe"
+          :style="{ '--split': `${swipePercent}%` }"
+        >
+          <img :src="dataUrl(newImage)" :alt="`${filePath} 改动后`" />
+          <img
+            class="top"
+            :src="dataUrl(oldImage)"
+            :alt="`${filePath} 改动前`"
+            :style="{ clipPath: `inset(0 ${100 - swipePercent}% 0 0)` }"
+          />
+          <div class="handle" :style="{ left: `${swipePercent}%` }"></div>
+          <input
+            v-model.number="swipePercent"
+            type="range"
+            min="0"
+            max="100"
+            class="slider"
+            aria-label="对比分割线"
+          />
+          <span class="tag left">改动前</span>
+          <span class="tag right">改动后</span>
+        </div>
+
+        <div v-else-if="imageMode === 'blend' && blendedUrl" class="blend">
+          <img :src="blendedUrl" :alt="`${filePath} 差异热力图`" />
+          <div class="muted">白 = 两个版本完全一致；越暗 = 改动越大。</div>
+        </div>
+
+        <div v-else class="images">
+          <figure class="image">
+            <figcaption>改动前</figcaption>
+            <img v-if="oldImage" :src="dataUrl(oldImage)" :alt="filePath" />
+            <span v-else class="muted">这一侧没有文件</span>
+            <div class="muted">{{ formatBytes(oldSize) }}</div>
+          </figure>
+          <figure class="image">
+            <figcaption>改动后</figcaption>
+            <img v-if="newImage" :src="dataUrl(newImage)" :alt="filePath" />
+            <span v-else class="muted">这一侧没有文件</span>
+            <div class="muted">{{ formatBytes(newSize) }}</div>
+          </figure>
+        </div>
       </div>
 
       <div v-else-if="render === 'binary'" class="notice">
@@ -383,6 +574,88 @@ const stats = computed(() => {
 
 .line.delete .mark {
   background: rgba(203, 36, 49, 0.22);
+}
+
+.image-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.swipe {
+  position: relative;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.swipe img {
+  display: block;
+  max-width: 520px;
+  max-height: 420px;
+  background: repeating-conic-gradient(#f0f2f5 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+}
+
+.swipe img.top {
+  position: absolute;
+  inset: 0;
+}
+
+.swipe .handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #1f5aa8;
+  pointer-events: none;
+}
+
+.swipe .slider {
+  position: absolute;
+  inset: auto 0 0 0;
+  width: 100%;
+  margin: 0;
+  opacity: 0;
+  height: 24px;
+  cursor: ew-resize;
+}
+
+.swipe .tag {
+  position: absolute;
+  top: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(31, 90, 168, 0.85);
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.swipe .tag.left {
+  left: 6px;
+}
+
+.swipe .tag.right {
+  right: 6px;
+}
+
+.blend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.blend img {
+  display: block;
+  max-width: 520px;
+  max-height: 420px;
 }
 
 .images {
