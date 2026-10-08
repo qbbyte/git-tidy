@@ -8,6 +8,7 @@ import { useCommitStore } from "@/stores/commits";
 import { useDetailStore } from "@/stores/detail";
 import { useReposStore } from "@/stores/repos";
 import { specFor } from "@/api/spec";
+import { COMMIT_ROW_HEIGHT } from "@/styles/tokens";
 import type { CommitFilter } from "@/api/commit";
 
 /**
@@ -200,7 +201,7 @@ watch(repoId, (id) => {
             <n-virtual-list
               v-else
               :items="commitStore.commits"
-              :item-size="44"
+              :item-size="COMMIT_ROW_HEIGHT"
               key-field="id"
               class="commit-list"
               @scroll="onScroll"
@@ -220,7 +221,7 @@ watch(repoId, (id) => {
           <n-space align="center">
             <template v-if="commitStore.error && hasRows">
               <span class="muted">读取下一页失败：{{ commitStore.error.message }}</span>
-              <n-button size="tiny" @click="loadMore">重试</n-button>
+              <n-button size="small" @click="loadMore">重试</n-button>
             </template>
             <n-spin v-else-if="commitStore.loading" size="small" />
             <span v-else-if="hasRows && commitStore.loadedAll" class="muted">已全部加载</span>

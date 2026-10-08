@@ -142,6 +142,18 @@ export const RADIUS_CONTROL = "6px";
 export const RADIUS_CARD = "10px";
 
 /**
+ * 提交列表的行高。
+ *
+ * **虚拟列表的 `item-size` 必须与它逐像素一致**：Naive UI 的虚拟列表靠 item-size 算
+ * 滚动条总高与每一行的偏移，两个值不一致时列表能滚、但行会重叠或留缝，而且不报错。
+ * 所以它定义在这里，`CommitRow.vue` 的行高与 `CommitsView.vue` 的 item-size 都从这里取。
+ *
+ * 30px 的由来：扫历史找一条提交是主场景，1366×768 下 30px 能看 22 行（44px 只有 13 行），
+ * 再压下去图列的 S 形弯线和 12px 徽标就要开始挤了。
+ */
+export const COMMIT_ROW_HEIGHT = 30;
+
+/**
  * 把 token 铺成 CSS 自定义属性。
  *
  * 必须在 `mount()` 之前同步调用：注入晚一帧的话首屏会先按默认字体、

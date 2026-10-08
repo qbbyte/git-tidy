@@ -76,7 +76,7 @@ function short(sha: string | null) {
         @positive-click="writes.undo()"
       >
         <template #trigger>
-          <n-button size="tiny" :disabled="!writes.canUndo || writes.busy" :loading="writes.busy">
+          <n-button size="small" :disabled="!writes.canUndo || writes.busy" :loading="writes.busy">
             撤销上一步
           </n-button>
         </template>
@@ -89,7 +89,7 @@ function short(sha: string | null) {
 
     <div v-else class="list">
       <div v-for="entry in writes.journal" :key="entry.id" class="row">
-        <n-tag :type="typeOf(entry.status)" size="tiny" :bordered="false">
+        <n-tag :type="typeOf(entry.status)" size="small" :bordered="false">
           {{ entry.statusLabel }}
         </n-tag>
         <span class="what">{{ label(entry.action) }}</span>

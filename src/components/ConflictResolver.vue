@@ -198,7 +198,7 @@ watch(
             </div>
             <div class="hunk-actions">
               <n-button
-                size="tiny"
+                size="small"
                 :type="choices[index] === 'ours' ? 'primary' : 'default'"
                 :disabled="!canResolve()"
                 @click="choose(index, 'ours')"
@@ -206,7 +206,7 @@ watch(
                 取我
               </n-button>
               <n-button
-                size="tiny"
+                size="small"
                 :type="choices[index] === 'theirs' ? 'primary' : 'default'"
                 :disabled="!canResolve()"
                 @click="choose(index, 'theirs')"
@@ -214,7 +214,7 @@ watch(
                 取对
               </n-button>
               <n-button
-                size="tiny"
+                size="small"
                 quaternary
                 :disabled="!canResolve()"
                 @click="choose(index, 'base')"

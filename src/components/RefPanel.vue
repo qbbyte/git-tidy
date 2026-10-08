@@ -181,11 +181,11 @@ function shortSha(sha: string) {
           <template v-if="renaming && renaming.from === item.name">
             <n-input
               v-model:value="renaming.to"
-              size="tiny"
+              size="small"
               @keyup.enter="saveRename"
               @click.stop
             />
-            <n-button size="tiny" type="primary" @click.stop="saveRename">存</n-button>
+            <n-button size="small" type="primary" @click.stop="saveRename">存</n-button>
           </template>
           <template v-else>{{ item.name }}</template>
         </span>
@@ -194,7 +194,7 @@ function shortSha(sha: string) {
         <span class="ref-actions" @click.stop>
           <n-button
             v-if="item.name !== currentBranch"
-            size="tiny"
+            size="small"
             quaternary
             :disabled="!canWrite()"
             :title="dirtyHint"
@@ -202,7 +202,7 @@ function shortSha(sha: string) {
           >
             切换
           </n-button>
-          <n-button size="tiny" quaternary :disabled="!canWrite()" @click="openUpstream(item)">
+          <n-button size="small" quaternary :disabled="!canWrite()" @click="openUpstream(item)">
             上游
           </n-button>
           <!--
@@ -216,14 +216,14 @@ function shortSha(sha: string) {
             @positive-click="writes.push(remoteName, item.name, false, true)"
           >
             <template #trigger>
-              <n-button size="tiny" quaternary :disabled="!canWrite()">强推</n-button>
+              <n-button size="small" quaternary :disabled="!canWrite()">强推</n-button>
             </template>
           </n-popconfirm>
-          <n-button size="tiny" quaternary :disabled="!canWrite()" @click="startRename(item)">
+          <n-button size="small" quaternary :disabled="!canWrite()" @click="startRename(item)">
             改名
           </n-button>
           <n-button
-            size="tiny"
+            size="small"
             quaternary
             type="error"
             :disabled="!canWrite() || item.name === currentBranch"
@@ -241,13 +241,13 @@ function shortSha(sha: string) {
           <n-select
             v-model:value="upstreamChoice"
             :options="upstreamOptions"
-            size="tiny"
+            size="small"
             clearable
             filterable
             tag
             placeholder="选一个远程跟踪分支"
           />
-          <n-button size="tiny" type="primary" @click="saveUpstream(item.name)">设定</n-button>
+          <n-button size="small" type="primary" @click="saveUpstream(item.name)">设定</n-button>
         </div>
       </div>
       <n-empty v-if="!branches.length" size="small" description="还没有本地分支" />
@@ -267,7 +267,7 @@ function shortSha(sha: string) {
             <b>{{ unmergedOf(confirmDelete.name) ?? "?" }}</b> 个未合并的提交。
             输入分支名确认：
           </span>
-          <n-input v-model:value="confirmDelete.typed" size="tiny" placeholder="分支名" />
+          <n-input v-model:value="confirmDelete.typed" size="small" placeholder="分支名" />
         </div>
       </template>
     </n-popconfirm>
@@ -340,7 +340,7 @@ function shortSha(sha: string) {
           <span class="ref-actions" @click.stop>
             <n-button
               v-if="remoteDeleting === item.name"
-              size="tiny"
+              size="small"
               type="error"
               :disabled="remoteDeleteTyped !== item.name"
               @click="deleteRemote(item.name)"
@@ -349,7 +349,7 @@ function shortSha(sha: string) {
             </n-button>
             <n-button
               v-else
-              size="tiny"
+              size="small"
               quaternary
               type="error"
               @click="remoteDeleting = item.name; remoteDeleteTyped = ''"
@@ -358,7 +358,7 @@ function shortSha(sha: string) {
             </n-button>
           </span>
           <div v-if="remoteDeleting === item.name" class="inline-form" @click.stop>
-            <n-input v-model:value="remoteDeleteTyped" size="tiny" placeholder="输入分支名确认" />
+            <n-input v-model:value="remoteDeleteTyped" size="small" placeholder="输入分支名确认" />
           </div>
         </div>
       </div>
@@ -370,7 +370,7 @@ function shortSha(sha: string) {
         <span class="ref-name" :title="item.fullName">{{ item.name }}</span>
         <code v-if="item.target" class="muted">{{ shortSha(item.target) }}</code>
         <n-button
-          size="tiny"
+          size="small"
           quaternary
           type="error"
           :disabled="!canWrite()"

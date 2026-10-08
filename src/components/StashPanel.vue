@@ -71,7 +71,7 @@ function isPicked(path: string) {
 
     <div v-if="repos.interrupted" class="warn">
       现在停在「{{ repos.interrupt }}」上，先退回或处理完再动 stash。
-      <n-button size="tiny" :loading="writes.busy" @click="writes.abort()">一键退回</n-button>
+      <n-button size="small" :loading="writes.busy" @click="writes.abort()">一键退回</n-button>
     </div>
 
     <n-input v-model:value="message" size="small" placeholder="说明（留空＝git 默认的 WIP 描述）" />
@@ -106,33 +106,33 @@ function isPicked(path: string) {
           <span>{{ dayjs(entry.time * 1000).format("MM-DD HH:mm") }}</span>
         </div>
         <div class="row-actions">
-          <n-button size="tiny" quaternary :disabled="!canWrite()" @click="writes.applyStash(entry.reference)">
+          <n-button size="small" quaternary :disabled="!canWrite()" @click="writes.applyStash(entry.reference)">
             取
           </n-button>
-          <n-button size="tiny" quaternary :disabled="!canWrite()" @click="writes.popStash(entry.reference)">
+          <n-button size="small" quaternary :disabled="!canWrite()" @click="writes.popStash(entry.reference)">
             取并删
           </n-button>
           <n-button
-            size="tiny"
+            size="small"
             quaternary
             :disabled="!canWrite()"
             @click="branchFrom = { reference: entry.reference, name: '' }"
           >
             建分支
           </n-button>
-          <n-button size="tiny" quaternary type="error" :disabled="!canWrite()" @click="writes.dropStash(entry.reference)">
+          <n-button size="small" quaternary type="error" :disabled="!canWrite()" @click="writes.dropStash(entry.reference)">
             删
           </n-button>
         </div>
         <div v-if="branchFrom && branchFrom.reference === entry.reference" class="branch-from">
           <n-input
             v-model:value="branchFrom.name"
-            size="tiny"
+            size="small"
             placeholder="新分支名"
             @keyup.enter="stashToBranch(entry.reference, branchFrom.name)"
           />
           <n-button
-            size="tiny"
+            size="small"
             type="primary"
             @click="stashToBranch(entry.reference, branchFrom.name)"
           >

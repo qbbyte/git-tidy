@@ -3,6 +3,7 @@ import { computed } from "vue";
 import dayjs from "dayjs";
 import { NTag } from "naive-ui";
 import type { Commit, GraphRow, GraphSegment } from "@/api/commit";
+import { COMMIT_ROW_HEIGHT } from "@/styles/tokens";
 
 /**
  * 只给常见规范 type 上色。type 是否在白名单里由仓库配置判定（需求 6.7），
@@ -31,8 +32,18 @@ const props = defineProps<{
 
 const emit = defineEmits<{ click: [] }>();
 
-const ROW_HEIGHT = 44;
+/** 行高从 tokens 取，虚拟列表的 item-size 从同一个值取——见 COMMIT_ROW_HEIGHT 的注释 */
+const ROW_HEIGHT = COMMIT_ROW_HEIGHT;
 const LANE_WIDTH = 14;
+
+/**
+ * 图列里所有纵向偏移都从 ROW_HEIGHT 推，**不写死像素**。
+ *
+ * 截断边（筛选态，§7.7）原本写的是 `ROW_HEIGHT/2 + 8` / `ROW_HEIGHT - 14` /
+ * `ROW_HEIGHT - 8`：行高 44 时刚好是 22→30→30→36，一条顺的竖线；行高改成 30 就变成
+ * 15→23→16→22，中间那个控制点跑到了起点上方，画出来是个回环。所以这三个数得跟着行高走。
+ */
+const STUB_GAP = ROW_HEIGHT * 0.18;
 
 /**
  * 调色板。下标由 Rust 侧**按分支永久发号**（`graph.rs` 的 `take_color`）：0 永远是主线
@@ -122,15 +133,15 @@ function strokeOf(segment: GraphSegment) {
 function stubEndOf(segment: GraphSegment) {
   const fromX = centerX(segment.from);
   const x = centerX(segment.to);
-  return `M ${fromX} ${ROW_HEIGHT / 2} C ${fromX} ${ROW_HEIGHT / 2 + 8}, ${x} ${
-    ROW_HEIGHT - 14
-  }, ${x} ${ROW_HEIGHT - 8}`;
+  const startY = ROW_HEIGHT / 2;
+  const endY = ROW_HEIGHT - STUB_GAP;
+  return `M ${fromX} ${startY} C ${fromX} ${startY + STUB_GAP}, ${x} ${endY - STUB_GAP * 0.75}, ${x} ${endY}`;
 }
 
 /** 端点帽：一个小横杠，让这一段看着是"到头了"而不是"被裁了" */
 function stubCapOf(segment: GraphSegment) {
   const x = centerX(segment.to);
-  const y = ROW_HEIGHT - 8;
+  const y = ROW_HEIGHT - STUB_GAP;
   return `M ${x - 3} ${y} L ${x + 3} ${y}`;
 }
 
@@ -263,11 +274,13 @@ function stubOf() {
 .commit-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 12px;
+  gap: 6px;
+  /* 行高不能在这里另写一个数：虚拟列表的 item-size 从 tokens 取，
+     两个值不一致时列表会重叠或留缝 */
+  height: 30px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--border-soft);
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -289,12 +302,12 @@ function stubOf() {
 .sha {
   flex: none;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .type-tag {
   flex: none;
-  min-width: 62px;
+  min-width: 52px;
   justify-content: center;
 }
 
@@ -303,21 +316,23 @@ function stubOf() {
   align-items: center;
   gap: 4px;
   flex: none;
-  /* 分支名可以很长，也能带斜杠；封顶让主体信息始终看得见 */
-  max-width: 46%;
+  /* 分支名可以很长，也能带斜杠；封顶让主体信息始终看得见。
+     原来给到 46%——一条提交挂十几个远程分支时 subject 只剩几十像素，
+     而扫历史找的正是 subject */
+  max-width: 28%;
   overflow: hidden;
 }
 
 .badge {
   flex: none;
-  max-width: 160px;
+  max-width: 140px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  padding: 1px 7px;
+  padding: 0 6px;
   border-radius: 9px;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 11px;
+  line-height: 15px;
 }
 
 .badge.branch {
@@ -363,7 +378,7 @@ function stubOf() {
 .author,
 .time {
   flex: none;
-  font-size: 12px;
+  font-size: 11px;
   opacity: 0.7;
 }
 </style>

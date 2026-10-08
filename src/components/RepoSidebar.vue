@@ -156,7 +156,7 @@ watch(
         >
           <div class="row-main">
             <span class="repo-name" :title="repo.path">{{ repo.name }}</span>
-            <n-tag v-if="repo.id !== (editing?.id ?? -1)" :type="kindTag(repo).type" size="tiny">
+            <n-tag v-if="repo.id !== (editing?.id ?? -1)" :type="kindTag(repo).type" size="small">
               {{ kindTag(repo).text }}
             </n-tag>
           </div>
@@ -164,18 +164,18 @@ watch(
             <template v-if="editing && editing.id === repo.id">
               <n-input
                 v-model:value="editing.name"
-                size="tiny"
+                size="small"
                 placeholder="留空回落到目录名"
                 @keyup.enter="saveRename"
                 @click.stop
               />
-              <n-button size="tiny" type="primary" @click.stop="saveRename">存</n-button>
-              <n-button size="tiny" quaternary @click.stop="editing = null">取消</n-button>
+              <n-button size="small" type="primary" @click.stop="saveRename">存</n-button>
+              <n-button size="small" quaternary @click.stop="editing = null">取消</n-button>
             </template>
             <template v-else>
               <n-button
                 v-if="repo.kind === 'browse'"
-                size="tiny"
+                size="small"
                 secondary
                 type="primary"
                 :disabled="busy"
@@ -183,8 +183,8 @@ watch(
               >
                 克隆
               </n-button>
-              <n-button size="tiny" quaternary @click.stop="startRename(repo)">重命名</n-button>
-              <n-button size="tiny" quaternary type="error" @click.stop="removeRepo(repo)">
+              <n-button size="small" quaternary @click.stop="startRename(repo)">重命名</n-button>
+              <n-button size="small" quaternary type="error" @click.stop="removeRepo(repo)">
                 移除
               </n-button>
             </template>

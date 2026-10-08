@@ -153,7 +153,7 @@ defineExpose({ reload: load });
     <div class="head">
       <span class="muted">分段暂存</span>
       <n-button
-        size="tiny"
+        size="small"
         quaternary
         :loading="loading"
         :disabled="writes.busy"

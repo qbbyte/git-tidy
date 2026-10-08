@@ -340,7 +340,7 @@ const stats = computed(() => {
     >
       <div>错误码：{{ error.code }}</div>
       <pre v-if="error.detail" class="raw-output">{{ error.detail }}</pre>
-      <n-button size="tiny" @click="emit('retry')">重试</n-button>
+      <n-button size="small" @click="emit('retry')">重试</n-button>
     </n-alert>
 
     <div v-else-if="loading" class="waiting">

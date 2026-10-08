@@ -132,7 +132,7 @@ function closeError() {
             <n-space size="small" class="recheck">
               <n-button
                 v-if="!writes.hasConflicts"
-                size="tiny"
+                size="small"
                 type="warning"
                 :loading="writes.busy"
                 @click="writes.abort()"
@@ -141,7 +141,7 @@ function closeError() {
               </n-button>
               <n-button
                 v-if="!writes.hasConflicts"
-                size="tiny"
+                size="small"
                 type="primary"
                 :loading="writes.busy"
                 @click="writes.continueOperation(null)"
@@ -149,7 +149,7 @@ function closeError() {
                 续跑收尾
               </n-button>
               <n-button
-                size="tiny"
+                size="small"
                 :loading="repos.loading"
                 @click="repos.refreshAll()"
               >

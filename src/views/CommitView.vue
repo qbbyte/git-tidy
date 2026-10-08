@@ -85,7 +85,7 @@ function toggleExpand(file: WorkingFile) {
       <header class="column-head">
         <span>已暂存（{{ staged.length }}）</span>
         <n-button
-          size="tiny"
+          size="small"
           quaternary
           :disabled="!staged.length || busy"
           @click="unstageAll"
@@ -96,7 +96,7 @@ function toggleExpand(file: WorkingFile) {
       <div class="file-list">
         <div v-for="file in staged" :key="`staged-${file.path}`" class="file-row">
           <n-checkbox :checked="true" :disabled="busy" @update:checked="uncheck(file)" />
-          <n-tag :type="statusOf(file).type" size="tiny" :bordered="false">
+          <n-tag :type="statusOf(file).type" size="small" :bordered="false">
             {{ statusOf(file).text }}
           </n-tag>
           <code class="file-path" :title="pathLabel(file)">{{ pathLabel(file) }}</code>
@@ -106,7 +106,7 @@ function toggleExpand(file: WorkingFile) {
 
       <header class="column-head">
         <span>变更（{{ changed.length }}）</span>
-        <n-button size="tiny" quaternary :disabled="!changed.length || busy" @click="stageAll">
+        <n-button size="small" quaternary :disabled="!changed.length || busy" @click="stageAll">
           全部暂存
         </n-button>
       </header>
@@ -114,12 +114,12 @@ function toggleExpand(file: WorkingFile) {
         <div v-for="file in changed" :key="`changed-${file.path}`" class="file-block">
           <div class="file-row">
             <n-checkbox :checked="false" :disabled="busy" @update:checked="check(file)" />
-            <n-tag :type="statusOf(file).type" size="tiny" :bordered="false">
+            <n-tag :type="statusOf(file).type" size="small" :bordered="false">
               {{ statusOf(file).text }}
             </n-tag>
             <code class="file-path" :title="pathLabel(file)">{{ pathLabel(file) }}</code>
             <!-- 分段暂存的入口：点开才去取这个文件的未暂存改动 -->
-            <n-button size="tiny" quaternary @click.stop="toggleExpand(file)">
+            <n-button size="small" quaternary @click.stop="toggleExpand(file)">
               {{ expanded === file.path ? "收起" : "分段" }}
             </n-button>
           </div>

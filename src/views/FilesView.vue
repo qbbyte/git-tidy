@@ -203,7 +203,7 @@ watch(
                   <span class="subject" :title="commit.subject">{{ commit.subject }}</span>
                   <span class="muted">{{ commit.authorName }}</span>
                   <span class="muted">{{ dayjs(commit.time * 1000).format("YYYY-MM-DD") }}</span>
-                  <n-button size="tiny" quaternary @click="jumpToCommit(commit.id)">查看</n-button>
+                  <n-button size="small" quaternary @click="jumpToCommit(commit.id)">查看</n-button>
                 </div>
                 <div class="muted">历史跟着改名走（git log --follow），改名之前的改动也在其中。</div>
               </div>

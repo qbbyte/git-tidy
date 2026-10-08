@@ -136,12 +136,12 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
         都会在 Rust 侧被拒，界面只负责把拒绝的理由显示出来。
       -->
       <n-space size="small" class="ops" align="center">
-        <n-button size="tiny" quaternary :disabled="!writes.canWrite" @click="pickThis">
+        <n-button size="small" quaternary :disabled="!writes.canWrite" @click="pickThis">
           摘取到当前分支
         </n-button>
         <n-popconfirm :disabled="!writes.canWrite" positive-text="回滚" negative-text="算了" @positive-click="revertThis">
           <template #trigger>
-            <n-button size="tiny" quaternary :disabled="!writes.canWrite">回滚这条</n-button>
+            <n-button size="small" quaternary :disabled="!writes.canWrite">回滚这条</n-button>
           </template>
           <div class="revert-note">
             <div>回滚是在当前分支上新增一条反向提交，历史不会被删除。</div>
@@ -164,13 +164,13 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
         </n-popconfirm>
         <n-popconfirm positive-text="reset --soft" negative-text="算了" @positive-click="resetToThis('soft')">
           <template #trigger>
-            <n-button size="tiny" quaternary :disabled="!writes.canWrite">重置到此（soft）</n-button>
+            <n-button size="small" quaternary :disabled="!writes.canWrite">重置到此（soft）</n-button>
           </template>
           提交留在历史里，改动回到暂存区。
         </n-popconfirm>
         <n-popconfirm positive-text="reset --hard" negative-text="算了" @positive-click="resetToThis('hard')">
           <template #trigger>
-            <n-button size="tiny" quaternary type="error" :disabled="!writes.canWrite">
+            <n-button size="small" quaternary type="error" :disabled="!writes.canWrite">
               丢弃到此处（hard）
             </n-button>
           </template>
@@ -226,7 +226,7 @@ async function resetToThis(mode: "soft" | "mixed" | "hard") {
               <span v-if="change.oldPath" class="muted">（原 {{ change.oldPath }}）</span>
             </span>
             <span class="counts muted">{{ countsOf(change) }}</span>
-            <n-tag v-if="change.score !== null && change.score < 100" size="tiny" :bordered="false">
+            <n-tag v-if="change.score !== null && change.score < 100" size="small" :bordered="false">
               {{ change.score }}%
             </n-tag>
           </div>

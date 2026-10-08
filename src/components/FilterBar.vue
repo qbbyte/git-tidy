@@ -183,7 +183,7 @@ function clear() {
     </n-space>
     <!-- 有筛选时把条件原样列出来：图上那些截断端点就是这么来的，得让人看得见原因 -->
     <div v-if="filtering" class="echo">
-      <n-tag size="tiny" :bordered="false" type="info">筛选中</n-tag>
+      <n-tag size="small" :bordered="false" type="info">筛选中</n-tag>
       <span v-if="filter.rev">rev：{{ filter.rev }}</span>
       <span v-if="filter.authors?.length">作者：{{ filter.authors.join("、") }}</span>
       <span v-if="filter.grep?.length">关键词：{{ filter.grep.join("、") }}</span>

@@ -201,7 +201,7 @@ onUnmounted(() => {
         <n-tag size="small" :bordered="false" type="info">
           规范来源：{{ spec ? SOURCE_LABEL[spec.source] : "读取中" }}
         </n-tag>
-        <n-button size="tiny" :loading="checking" @click="open">重新读取</n-button>
+        <n-button size="small" :loading="checking" @click="open">重新读取</n-button>
       </n-space>
     </template>
 
