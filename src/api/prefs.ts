@@ -1,4 +1,5 @@
 import { call } from "@/api/client";
+import type { AiConfig } from "@/lib/ai";
 
 /** 与 Rust 侧 store/prefs.rs 的 Preferences 一一对应（camelCase）。 */
 export type PullStrategy = "ff_only" | "rebase" | "merge";
@@ -21,12 +22,19 @@ export interface WindowState {
   height: number;
 }
 
+/**
+ * AI 接入配置的类型定义只有一份，在 `lib/ai.ts`（那里还管校验与解析）。
+ * apiKey 明文存在本地 preferences.json，属本地桌面应用的取舍（详见 Rust 侧注释）。
+ */
+export type { AiConfig };
+
 export interface Preferences {
   pullStrategy: PullStrategy;
   flowPrefixes: FlowPrefixes;
   autoUpdate: boolean;
   columns: Columns;
   window: WindowState;
+  ai: AiConfig;
 }
 
 export function prefsGet() {

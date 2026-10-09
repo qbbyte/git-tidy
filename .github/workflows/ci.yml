@@ -28,6 +28,12 @@ jobs:
       - run: npm run build
       # 冲突标记解析器的边界用例。它是纯 JS，不需要 git，所以放前端 job 里最省事
       - run: npm run check:conflict
+      # 下面四个同样是纯前端不变量脚本。它们存在的意义就是让那些「一旦破掉、界面上
+      # 只会看起来变了而看不出哪里错了」的地方自动变红，不接进 CI 等于白写
+      - run: npm run check:ai
+      - run: npm run check:highlight
+      - run: npm run check:tokens
+      - run: npm run check:pane
 
   rust:
     name: Rust（${{ matrix.os }}）

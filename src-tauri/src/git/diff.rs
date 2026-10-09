@@ -178,6 +178,32 @@ pub fn read_worktree(repo: &Path, path: &str, ignore_white_space: bool) -> Resul
     assemble(repo, path, &out)
 }
 
+/**
+ * 提交时给 AI 看的那份「这次到底改了什么」。
+ *
+ * 只取**已暂存**的内容（`--cached`），与"提交"按钮要落盘的范围完全一致（§7.8）——AI
+ * 不该根据没 `git add` 的草稿编造提交说明。
+ *
+ * 这里是**整段纯文本**而不是逐文件结构化的 `Diff`：AI 要的是人读 git diff 时看到的那种
+ * 一整片，每个文件自带 `diff --git a/x b/x` 段头，而不是我们界面拆好的 hunks。
+ * 所以不进 `assemble` 那套解析/降级流水线，直接拿原始 stdout。
+ *
+ * 颜色 / textconv / ext-diff 同样关掉，理由同 `read`：转义序列和转换出的内容会污染原文，
+ * 让模型读错文件、读错内容。
+ */
+pub fn staged_text(repo: &Path) -> Result<String, GitError> {
+    let args: Vec<String> = vec![
+        "diff".to_string(),
+        "--cached".to_string(),
+        "--no-color".to_string(),
+        "--no-textconv".to_string(),
+        "--no-ext-diff".to_string(),
+        "--find-renames".to_string(),
+    ];
+    let out = process::run_bytes(Some(repo), &process::strs(&args), &[])?.expect_success()?;
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
 /// 解析 + 阈值判定 + 图片取字节，全在一趟里做完。
 fn assemble(repo: &Path, path: &str, stdout: &[u8]) -> Result<Diff, GitError> {
     let text = String::from_utf8_lossy(stdout).into_owned();
@@ -869,6 +895,41 @@ mod tests {
         assert!(diff.hunks.is_empty(), "降级不能把原文一起带回去");
         assert!(diff.line_count > MAX_DIFF_LINES);
         assert!(diff.added > MAX_DIFF_LINES, "统计要留下：{}", diff.added);
+    }
+
+    /// 给 AI 看的那份文本里，只能有暂存区里的东西
+    ///
+    /// 这一条是功能前提而不是实现细节：模型只根据暂存区内容写提交说明，掺进未暂存的
+    /// 改动就会描述出一件用户还没打算提交的事。
+    #[test]
+    fn staged_text_covers_only_the_index() {
+        let dir = repo();
+        fs::write(dir.path().join("a.txt"), "one\n").expect("write");
+        fs::write(dir.path().join("b.txt"), "keep\n").expect("write");
+        commit(dir.path(), "chore: 铺底");
+        fs::write(dir.path().join("a.txt"), "one\nstaged\n").expect("write");
+        fs::write(dir.path().join("b.txt"), "keep\nunstaged\n").expect("write");
+        git_in(dir.path(), &["add", "a.txt"]);
+
+        let text = staged_text(dir.path()).expect("暂存区 diff");
+        // 原文整段透传：每个文件自带 diff --git 段头，这是要喂给模型的东西
+        assert!(text.contains("diff --git a/a.txt b/a.txt"), "{text}");
+        assert!(text.contains("+staged"), "{text}");
+        assert!(
+            !text.contains("unstaged") && !text.contains("b.txt"),
+            "未暂存的改动不能出现在给 AI 的那份里：{text}"
+        );
+    }
+
+    #[test]
+    fn staged_text_is_empty_when_nothing_is_staged() {
+        let dir = repo();
+        fs::write(dir.path().join("a.txt"), "one\n").expect("write");
+        commit(dir.path(), "chore: 铺底");
+        fs::write(dir.path().join("a.txt"), "one\ntwo\n").expect("write");
+
+        // 空暂存区要给出空串而不是报错：调用方（提交表单）自己提示「先 git add」
+        assert_eq!(staged_text(dir.path()).expect("暂存区 diff"), "");
     }
 
     #[test]

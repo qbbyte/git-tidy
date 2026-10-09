@@ -11,6 +11,7 @@
     "check:tokens": "node --experimental-strip-types scripts/check-tokens.mjs",
     "check:pane": "node --experimental-strip-types scripts/check-pane-divider.mjs",
     "check:highlight": "node --experimental-strip-types scripts/check-highlight.mjs",
+    "check:ai": "node --experimental-strip-types scripts/check-ai.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

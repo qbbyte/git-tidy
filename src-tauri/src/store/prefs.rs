@@ -25,6 +25,22 @@ pub struct Preferences {
     /// 提交列表显示哪些列。默认全开——省的是眼睛，不是数据
     pub columns: Columns,
     pub window: WindowState,
+    /// AI 生成提交信息的接入配置（§AI）。空 = 未启用。
+    /// api_key 明文落在本地 preferences.json 里，这是本地桌面应用的取舍：
+    /// 走前端直接调 LLM（参见前端 api/ai.ts），不引入 Rust 网络依赖。
+    pub ai: AiConfig,
+}
+
+/// AI 接入配置。`endpoint` 是 OpenAI 兼容的 `/chat/completions` 基址
+/// （可接 OpenAI / DeepSeek / 通义 / 本地 Ollama 等），`model` 是该服务上的模型名。
+///
+/// 三个字段默认全空 = 未启用：没填完的半套配置不该被当成可用状态。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiConfig {
+    pub endpoint: String,
+    pub api_key: String,
+    pub model: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,6 +120,7 @@ impl Default for Preferences {
             auto_update: true,
             columns: Columns::default(),
             window: WindowState::default(),
+            ai: AiConfig::default(),
         }
     }
 }

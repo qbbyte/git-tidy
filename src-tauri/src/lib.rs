@@ -43,6 +43,7 @@ pub fn run() {
             commands::commit::commit_create,
             commands::detail::commit_detail,
             commands::diff::commit_file_diff,
+            commands::diff::commit_diff,
             commands::diff::worktree_file_diff,
             commands::file::file_blame,
             commands::file::file_history,
