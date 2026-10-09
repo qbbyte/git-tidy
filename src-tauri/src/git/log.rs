@@ -283,9 +283,10 @@ fn keeps(commit: &Commit, filter: &Filter, spec: &Spec) -> bool {
 }
 
 /// 总数。必须带**同一组**筛选条件跑，否则"共 N 条"与实得条数对不上（需求 7.7）。
+/// 统计类模块（活跃度）算区间总量时也用它，好让两边是同一把尺。
 ///
 /// `rev-list` 不认 `--format/-n/--skip`，所以这里单独拼一套：git 认识的条件是一样的。
-fn count(repo: &Path, filter: &Filter) -> Result<usize, GitError> {
+pub(crate) fn count(repo: &Path, filter: &Filter) -> Result<usize, GitError> {
     let revision = filter.rev.clone().unwrap_or_else(|| "HEAD".to_string());
     let mut args = vec!["rev-list", "--count"];
     args.extend(condition_args(filter));
@@ -336,9 +337,9 @@ fn log_window(
     parse(&stdout)
 }
 
-/// git 认识的那几项筛选。两个调用点（`log` / `rev-list`）共用，避免两边漏传一个条件
-/// 导致总数和列表对不上。
-fn condition_args(filter: &Filter) -> Vec<&str> {
+/// git 认识的那几项筛选。三个调用点（`log` / `rev-list` / 活跃度统计）共用，
+/// 避免漏传一个条件导致总数和列表对不上。
+pub(crate) fn condition_args(filter: &Filter) -> Vec<&str> {
     let mut args = Vec::new();
     for author in &filter.authors {
         if author.trim().is_empty() {

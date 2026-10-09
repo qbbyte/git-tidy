@@ -61,6 +61,7 @@ pub fn run() {
             // M4 §7.21：符合率报告
             commands::report::compliance_report,
             commands::report::compliance_revisions,
+            commands::report::commit_activity,
             // M4 §7.22：CHANGELOG 生成与导出
             commands::changelog::changelog_build,
             commands::changelog::changelog_previous_tag,

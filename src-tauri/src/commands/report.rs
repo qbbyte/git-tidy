@@ -4,7 +4,9 @@ use tauri::State;
 
 use crate::config::spec;
 use crate::error::GitError;
+use crate::git::activity;
 use crate::git::compliance::{self, Range, Report};
+use crate::git::log::Filter;
 use crate::git::process;
 use crate::store::db::{query, Db};
 use crate::store::repos::{self, RepoKind};
@@ -34,6 +36,35 @@ pub async fn compliance_report(
     .await
     .map_err(|err| GitError::Internal(err.to_string()))??;
     Ok(loaded)
+}
+
+/// 活跃度统计（报告页的第二个视角）。
+///
+/// 与符合率报告共用 `log::Filter` 的条件与扫描上限，所以两个视角的数字能对上账。
+/// 区间用 `since`/`until`（git 自己的时间口语，如 `today`、`1 week ago`），
+/// 前端只给预设，不让用户手填 rev 语法。
+///
+/// 作者聚合需要全量提交，所以不传 `--author`：`Filter.authors` 留空，
+/// 界面要按作者分组的话自己拿 `authors` 表去跳历史页筛。
+#[tauri::command]
+pub async fn commit_activity(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    rev: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+) -> Result<activity::Activity, GitError> {
+    let (path, _kind) = query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
+    let filter = Filter {
+        rev,
+        since,
+        until,
+        ..Filter::default()
+    };
+    // 只读浏览仓库也能统计：它有完整历史，只是没有工作区
+    tauri::async_runtime::spawn_blocking(move || activity::build(&path, &filter))
+        .await
+        .map_err(|err| GitError::Internal(err.to_string()))?
 }
 
 /// 可选区间：HEAD、tag、`a..b`。界面把它当输入提示给用户，而不是让人手填 rev 语法。
