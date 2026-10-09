@@ -11,4 +11,5 @@ pub mod repo;
 pub mod report;
 pub mod shell;
 pub mod spec;
+pub mod update;
 pub mod write;

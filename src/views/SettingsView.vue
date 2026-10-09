@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   NAlert,
   NButton,
@@ -12,6 +12,8 @@ import {
 } from "naive-ui";
 import { PULL_STRATEGY_LABEL, type PullStrategy } from "@/api/prefs";
 import { usePrefsStore } from "@/stores/prefs";
+import { checkForUpdate, type CheckResult } from "@/api/update";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { SHORTCUTS, TAB_SHORTCUTS, formatKeys } from "@/shortcuts";
 
 /**
@@ -71,7 +73,51 @@ function setPrefix(key: "feature" | "hotfix" | "release", value: string) {
   prefsStore.patch({ flowPrefixes: { ...prefs.value.flowPrefixes, [key]: value } });
 }
 
-onMounted(() => prefsStore.load());
+/**
+ * 检查更新（只查不装）。
+ *
+ * 三个出口都要留着，因为它们回答的是不同的问题：
+ * - 按钮：用户想现在查；
+ * - 开关：决定启动时顺不顺便查一次；
+ * - 结果行：把「当前版本 / 最新版本 / 去哪下」说清楚，而不是只弹一句“发现新版”。
+ */
+const updateResult = ref<CheckResult | null>(null);
+const updateError = ref<string | null>(null);
+const updateBusy = ref(false);
+
+async function runUpdateCheck() {
+  updateBusy.value = true;
+  updateError.value = null;
+  try {
+    updateResult.value = await checkForUpdate();
+  } catch (err) {
+    updateResult.value = null;
+    updateError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    updateBusy.value = false;
+  }
+}
+
+/** 把人送到下载页。下载仍然是用户自己点的——这里不碰任何文件 */
+async function openReleases(url?: string) {
+  await openUrl(url && url !== "" ? url : releasesPage.value);
+}
+
+const releasesPage = ref("");
+const currentVersion = ref("");
+
+async function ensureReleasesPage() {
+  if (releasesPage.value !== "") return;
+  const { updateEndpoint } = await import("@/api/update");
+  const endpoint = await updateEndpoint();
+  releasesPage.value = endpoint.releasesPageUrl;
+  currentVersion.value = endpoint.currentVersion;
+}
+
+onMounted(async () => {
+  await prefsStore.load();
+  void ensureReleasesPage();
+});
 </script>
 
 <template>
@@ -137,16 +183,44 @@ onMounted(() => prefsStore.load());
     </n-card>
 
     <n-card size="small" title="更新">
-      <div class="row">
-        <span class="label">启动时检查一次新版本</span>
-        <n-switch
-          :value="prefs?.autoUpdate ?? true"
-          size="small"
-          :disabled="!prefs"
-          @update:value="(value: boolean) => prefsStore.patch({ autoUpdate: value })"
-        />
-        <span class="muted">关掉就完全不联网问版本；更新源是 GitHub Releases 的静态文件，不自建服务端。</span>
-      </div>
+      <n-space vertical size="small">
+        <div class="row">
+          <span class="label">启动时检查一次新版本</span>
+          <n-switch
+            :value="prefs?.autoUpdate ?? true"
+            size="small"
+            :disabled="!prefs"
+            @update:value="(value: boolean) => prefsStore.patch({ autoUpdate: value })"
+          />
+          <span class="muted">
+            关掉就完全不联网问版本。只查不装：发现新版只会告诉你，并把你领到 Releases 页。
+          </span>
+        </div>
+        <div class="row">
+          <n-button size="small" :loading="updateBusy" @click="runUpdateCheck">检查更新</n-button>
+          <n-button size="small" quaternary :loading="updateBusy" @click="openReleases()">
+            打开发布页
+          </n-button>
+          <span v-if="currentVersion" class="muted">当前版本 v{{ currentVersion }}</span>
+        </div>
+        <n-alert v-if="updateError" type="warning" :bordered="false">{{ updateError }}</n-alert>
+        <n-alert
+          v-else-if="updateResult?.available"
+          type="info"
+          :bordered="false"
+          :title="`发现新版本 v${updateResult.latest?.version}（当前 v${updateResult.current}）`"
+        >
+          <div>{{ updateResult.latest?.name }}</div>
+          <n-space>
+            <n-button size="small" type="primary" @click="openReleases(updateResult.latest?.url)">
+              去看看
+            </n-button>
+          </n-space>
+        </n-alert>
+        <div v-else-if="updateResult" class="muted">
+          已是最新（v{{ updateResult.current }}）。
+        </div>
+      </n-space>
     </n-card>
 
     <n-card size="small" title="快捷键">

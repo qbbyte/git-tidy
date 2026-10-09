@@ -30,6 +30,8 @@ import {
   type ShortcutContext,
 } from "@/shortcuts";
 import { runShell } from "@/shell";
+import { checkForUpdate, updateCheckOnStartup, type CheckResult } from "@/api/update";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 /**
  * 外壳照 Fork：左栏常驻仓库与只读信息，主区用页签切「历史 / 提交」。
@@ -188,8 +190,39 @@ onMounted(() => {
   window.addEventListener("keydown", onKeyDown);
   // 设置要开着也能被刷新，所以偏好在启动时就读一份
   usePrefs().load();
+  void startupUpdateCheck();
 });
 onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
+
+/**
+ * 启动时那次版本检查（需求 7.24）。
+ *
+ * 三条自律：
+ * 1. **先问偏好**：关掉了就一个字节都不发，不做“先查了再决定要不要用”；
+ * 2. **静默失败**：查不到、限流、断网都不弹任何东西——那只是没查成，不是错误；
+ * 3. **提示是可关的横幅，不是弹窗**：启动就抢焦点的弹窗会把用户从正在做的事里拽出去。
+ */
+const updateNotice = ref<CheckResult | null>(null);
+
+async function startupUpdateCheck() {
+  try {
+    if (!(await updateCheckOnStartup())) return;
+    const result = await checkForUpdate();
+    if (result.available) updateNotice.value = result;
+  } catch {
+    // 查不到就算了，见上文第 2 条
+  }
+}
+
+function dismissUpdate() {
+  updateNotice.value = null;
+}
+
+async function openUpdatePage() {
+  const url = updateNotice.value?.latest?.url;
+  if (url) await openUrl(url);
+  dismissUpdate();
+}
 
 function closeError() {
   repos.error = null;
@@ -286,6 +319,19 @@ function closeError() {
               show-indicator
             />
             <div class="muted">{{ repos.progress.phase }}</div>
+          </div>
+
+          <div v-if="updateNotice" class="banner">
+            <n-alert type="info" :closable="true" @close="dismissUpdate">
+              <div class="banner-title">
+                发现新版本 v{{ updateNotice.latest?.version }}（当前 v{{ updateNotice.current }}）
+              </div>
+              <n-space size="small">
+                <span class="muted">{{ updateNotice.latest?.name }}</span>
+                <n-button size="small" type="primary" @click="openUpdatePage">去看看</n-button>
+                <span class="muted">下载与安装由 GitHub Releases 页面负责，本工具不自动替换自己</span>
+              </n-space>
+            </n-alert>
           </div>
 
           <n-alert

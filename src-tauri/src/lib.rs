@@ -7,6 +7,7 @@ mod config;
 mod error;
 mod git;
 mod store;
+mod update;
 mod write;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -70,6 +71,10 @@ pub fn run() {
             commands::prefs::prefs_reset,
             commands::prefs::prefs_path,
             commands::shell::shell_open_terminal,
+            // M5 §7.24：检查更新（只查不装）
+            commands::update::update_compare,
+            commands::update::update_check_on_startup,
+            commands::update::update_endpoint,
             commands::remote::repo_add_remote,
             commands::remote::repo_materialize,
             // M2：写命令全部经 commands::write::guard 的六步
