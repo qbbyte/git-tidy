@@ -1,0 +1,81 @@
+# CI：每次 push / PR 跑一遍。门槛就是本地该跑通的那几条命令，不另立标准。
+#
+# 分两个 job 是因为前端与 Rust 互不依赖，并行比串行快得多；合在一起则失败时要等
+# 前端构建完才知道 Rust 挂没挂。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  frontend:
+    name: 前端类型检查与构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 与 README「开发环境」里记的版本一致
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      # build 脚本本身就是 `vue-tsc --noEmit && vite build`：类型错误在这里就会红
+      - run: npm run build
+      # 冲突标记解析器的边界用例。它是纯 JS，不需要 git，所以放前端 job 里最省事
+      - run: npm run check:conflict
+
+  rust:
+    name: Rust（${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # tauri 依赖平台的 WebView/GTK 库，Ubuntu runner 上默认没有，缺了会在
+      # 编译期报 pkg-config 找不到，而不是报缺什么包
+      - name: 安装 Linux 下的 Tauri 系统依赖
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # tauri 的依赖树很大，缓存命中与否是这个 job 快慢的主要差别
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 格式
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      # -D warnings：CI 里"有警告"和"编译失败"同权。本地不看警告，CI 不能不看
+      - name: Lint
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      # 测试自己建临时仓库并配好 user.name/email，不依赖 runner 的全局 git 配置
+      - name: 测试
+        working-directory: src-tauri
+        run: cargo test
