@@ -20,7 +20,7 @@ export interface ShortcutContext {
   switchRepo(): void;
   /** 数字键 1..5：直达主区页签 */
   gotoTab(index: number): void;
-  /** Ctrl+,：打开设置（设置不在页签里，入口是左下角的齿轮） */
+  /** Ctrl+,：打开设置弹窗（设置不在页签里，入口是左下角的齿轮） */
   openSettings(): void;
 }
 

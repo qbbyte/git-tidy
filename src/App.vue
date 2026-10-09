@@ -16,6 +16,7 @@ import {
   type GlobalThemeOverrides,
 } from "naive-ui";
 import RepoSidebar from "@/components/RepoSidebar.vue";
+import SettingsModal from "@/components/SettingsModal.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { usePrefsStore as usePrefs } from "@/stores/prefs";
@@ -41,6 +42,7 @@ const route = useRoute();
 const router = useRouter();
 const repos = useReposStore();
 const writes = useWriteStore();
+const settingsVisible = ref(false);
 
 /**
  * 侧栏宽度，像素单位：它是导航，带宽固定比跟着窗口一起长要好。
@@ -92,7 +94,6 @@ const activeTab = computed(() => {
   if (route.name === "files") return "files";
   if (route.name === "report") return "report";
   if (route.name === "changelog") return "changelog";
-  if (route.name === "settings") return "settings";
   return "history";
 });
 /** 只读浏览仓库没有索引，提交页整个不给进（Rust 侧同样会拒，这里只是不摆出能点的按钮） */
@@ -154,7 +155,7 @@ const shortcutContext: ShortcutContext = {
     if (tab) go(TAB_ROUTE[tab.label] ?? "history");
   },
   openSettings() {
-    go("settings");
+    settingsVisible.value = true;
   },
 };
 
@@ -234,7 +235,7 @@ function closeError() {
     <n-dialog-provider>
     <n-message-provider>
       <div ref="shell" class="shell" :class="{ resizing: sider.dragging.value }">
-        <repo-sidebar class="sider" :style="{ width: `${sider.size.value}px` }" />
+        <repo-sidebar class="sider" :style="{ width: `${sider.size.value}px` }" @open-settings="settingsVisible = true" />
 
         <div
           class="sider-divider"
@@ -261,7 +262,7 @@ function closeError() {
               <n-tab name="report">报告</n-tab>
               <!-- 导出可用；写回文件要工作区，所以只读浏览仓库下这个页签摆着但不写 -->
               <n-tab name="changelog">CHANGELOG</n-tab>
-              <!-- 设置不在这里：入口是左下角的齿轮（App.vue 底部），见 TAB_SHORTCUTS 的注释 -->
+              <!-- 设置不在这里：入口是左下角的齿轮，打开的是弹窗而非页签 -->
             </n-tabs>
             <span class="headline" :title="headline">{{ headline }}</span>
           </header>
@@ -351,6 +352,8 @@ function closeError() {
           </div>
         </section>
       </div>
+
+      <settings-modal v-model:show="settingsVisible" />
     </n-message-provider>
     </n-dialog-provider>
   </n-config-provider>

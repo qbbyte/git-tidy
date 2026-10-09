@@ -6,6 +6,7 @@ import {
   NButton,
   NCard,
   NInput,
+  NModal,
   NSelect,
   NSpace,
   NTag,
@@ -22,6 +23,9 @@ import {
   type Outcome,
   type Spec,
 } from "@/api/spec";
+import { requestCommitMessage, stagedDiff } from "@/api/ai";
+import { truncateDiff, type GeneratedCommit } from "@/lib/ai";
+import { usePrefsStore } from "@/stores/prefs";
 
 /**
  * 规范可视化提交表单（需求 6.2）。
@@ -37,6 +41,8 @@ import {
  */
 const props = defineProps<{ repoId: number; locked: boolean }>();
 const emit = defineEmits<{ (event: "committed"): void }>();
+
+const prefsStore = usePrefsStore();
 
 /** 输入停顿后再发 IPC：逐字符发会把每次按键变成一次磁盘读配置 */
 const CHECK_DELAY_MS = 200;
@@ -144,6 +150,8 @@ function clearDraft() {
   footer.value = "";
   taskId.value = "";
   outcome.value = null;
+  aiResult.value = null;
+  aiError.value = null;
 }
 
 async function open() {
@@ -184,6 +192,62 @@ async function submit() {
   } finally {
     submitting.value = false;
   }
+}
+
+/**
+ * AI 生成提交信息：拉暂存区 diff → 调 LLM → 解析 → **先弹窗给人看**，确认后才填表。
+ *
+ * 为什么不一生成就填：这一步会覆盖用户已经写了一半的草稿，而模型返回的东西十次里有
+ * 一次不理想（type 不合规范、描述太笼统）。直接覆盖等于让人重新打一遍字，所以结果先进
+ * 弹窗，「填入表单」是唯一会改动草稿的入口。
+ *
+ * 填回策略：type 只在落在仓库白名单内才写（否则留给用户手选，避免把一个不合规的
+ * type 先塞进去触发拦截提示）；scope / description / body 直接覆盖，因为它们本就是由
+ * 这次改动决定的。填完顺手重跑一次合规校验，让用户立刻看到结果。
+ */
+const aiGenerating = ref(false);
+const aiError = ref<string | null>(null);
+const aiResult = ref<GeneratedCommit | null>(null);
+/** diff 太大被截断过：要在弹窗里说明，否则模型那份描述是基于半张 diff 的 */
+const aiTruncated = ref(false);
+
+const aiConfig = computed(() => prefsStore.prefs?.ai);
+const aiEnabled = computed(() => {
+  const ai = aiConfig.value;
+  return !!ai && !!ai.endpoint.trim() && !!ai.apiKey.trim() && !!ai.model.trim();
+});
+/** 草稿里已经有东西时，弹窗要点破"会覆盖"，别让人以为在追加 */
+const aiWillOverwrite = computed(() => !!description.value.trim() || !!body.value.trim());
+
+async function onAiGenerate() {
+  const config = aiConfig.value;
+  if (!spec.value || !config || !aiEnabled.value) return;
+  aiError.value = null;
+  aiGenerating.value = true;
+  try {
+    const diff = await stagedDiff(props.repoId);
+    aiTruncated.value = truncateDiff(diff).truncated;
+    aiResult.value = await requestCommitMessage(config, diff, spec.value.types);
+  } catch (err) {
+    aiError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    aiGenerating.value = false;
+  }
+}
+
+async function applyAiResult() {
+  const result = aiResult.value;
+  if (!result) return;
+  if (result.type) type.value = result.type;
+  scope.value = result.scope;
+  description.value = result.description;
+  body.value = result.body;
+  aiResult.value = null;
+  await runCheck();
+}
+
+function closeAiResult() {
+  aiResult.value = null;
 }
 
 watch(draft, scheduleCheck);
@@ -300,6 +364,16 @@ onUnmounted(() => release?.());
         <n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submit">
           提交
         </n-button>
+        <n-button
+          size="small"
+          :disabled="!spec || aiGenerating || !aiEnabled"
+          :loading="aiGenerating"
+          :title="aiEnabled ? '根据已暂存的改动生成提交信息' : '先在设置里配置 AI 模型'"
+          @click="onAiGenerate"
+        >
+          AI 生成
+        </n-button>
+        <span v-if="!aiEnabled" class="muted">AI 模型未配置，见设置</span>
         <span v-if="locked" class="muted">
           有操作卡在半路，先完成或中止（见顶部提示条），期间不能提交
         </span>
@@ -307,7 +381,41 @@ onUnmounted(() => release?.());
           {{ checking ? "校验中" : "有拦截级问题，改完再提交" }}
         </span>
       </n-space>
+
+      <n-alert v-if="aiError" type="warning" :bordered="false">{{ aiError }}</n-alert>
     </n-space>
+
+    <!-- AI 结果：确认后才填表，覆盖草稿这件事必须由用户按过键才发生 -->
+    <n-modal
+      :show="!!aiResult"
+      preset="card"
+      title="AI 生成的提交信息"
+      class="ai-modal"
+      :bordered="false"
+      :mask-closable="false"
+      @update:show="(value: boolean) => !value && closeAiResult()"
+    >
+      <n-space v-if="aiResult" vertical size="small">
+        <n-alert v-if="aiWillOverwrite" type="info" :bordered="false">
+          填入会覆盖当前已写的描述与正文。
+        </n-alert>
+        <n-alert v-if="aiTruncated" type="warning" :bordered="false">
+          暂存区 diff 过长，已截断后送给模型；描述只覆盖了截断处之前的内容。
+        </n-alert>
+        <n-alert
+          v-if="!aiResult.type"
+          type="warning"
+          :bordered="false"
+          title="模型给的 type 不在本仓库白名单内，填入后请手选 type"
+        />
+        <pre class="ai-raw">{{ aiResult.raw }}</pre>
+        <n-space justify="end">
+          <n-button size="small" quaternary @click="closeAiResult">丢弃</n-button>
+          <n-button size="small" :loading="aiGenerating" @click="onAiGenerate">重新生成</n-button>
+          <n-button size="small" type="primary" @click="applyAiResult">填入表单</n-button>
+        </n-space>
+      </n-space>
+    </n-modal>
   </n-card>
 </template>
 
@@ -374,5 +482,24 @@ onUnmounted(() => release?.());
   white-space: pre-wrap;
   font-size: 12px;
   opacity: 0.8;
+}
+
+.ai-raw {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+}
+</style>
+
+<style>
+/* 弹窗卡片在 body 里，scoped 样式盖不到，宽度与内边距在全局里定 */
+.n-card.ai-modal {
+  width: 620px;
+  max-width: 90vw;
 }
 </style>

@@ -4,7 +4,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { GitTidyError } from "@/api/client";
 import { openTerminal } from "@/api/prefs";
-import { useRoute, useRouter } from "vue-router";
 import { NIcon } from "naive-ui";
 // 逐个图标路径 import（不是整包）：整包引入会把三千多个图标全打进包里，
 // 而这里只需要这一个。tree-shaking 之后单个图标 1–2 KB。
@@ -28,14 +27,14 @@ import type { Repo } from "@/api/repo";
  */
 const repos = useReposStore();
 const writes = useWriteStore();
-const route = useRoute();
-const router = useRouter();
 
-/** 设置页不是页签，是左下角齿轮打开的独立视图，所以它自己管激活态 */
-const settingsOpen = computed(() => route.name === "settings");
-function toggleSettings() {
-  if (settingsOpen.value) router.push({ name: "history" });
-  else router.push({ name: "settings" });
+const emit = defineEmits<{
+  /** 左下角齿轮被点击时触发，由 App.vue 打开设置弹窗 */
+  (e: "open-settings"): void;
+}>();
+
+function openSettings() {
+  emit("open-settings");
 }
 
 const path = ref("");
@@ -478,6 +477,7 @@ watch(
       为什么不用页签：设置一年可能点不到两次，而它占的是主区导航位——
       页签宽度有限，每多一个标签就少一格留给真正天天用的东西。
       齿轮在左下角是固定位置：不占导航，但始终在，也符合“设置属于应用而不属于仓库”的直觉。
+      点击后打开全局设置弹窗（SettingsModal），不再跳转路由。
 
       图标内联而不引图标库：项目里其它记号（文件树、diff 记号）都是这么画的，
       为一个齿轮加一个依赖不值当。
@@ -486,11 +486,9 @@ watch(
       <button
         type="button"
         class="gear"
-        :class="{ active: settingsOpen }"
-        :aria-current="settingsOpen ? 'page' : undefined"
         title="设置（Ctrl+,）"
         :style="{ borderRadius: RADIUS_CONTROL }"
-        @click="toggleSettings"
+        @click="openSettings"
       >
         <n-icon :component="Settings" size="14" />
         <span>设置</span>

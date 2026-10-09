@@ -1,62 +1,115 @@
 # git-tidy
 
 [![CI](https://github.com/qbbyte/git-tidy/actions/workflows/ci.yml/badge.svg)](https://github.com/qbbyte/git-tidy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-把不符合规范的提交整理成符合 Conventional Commits 的 Git 历史。
+git-tidy 是一个用 Tauri v2 + Vue 3 + Rust 写的 Git 桌面客户端。它把两件事放进同一个进程：
 
-> **这不是什么**：GitHub 上叫 git-tidy 的项目不止本仓库一个（Git 相关的库、CLI 辅助工具、
-> hook 套件都有同名或近名项目）。本项目是一个**桌面应用（Tauri + Vue）**，核心是把一段
-> 连续区间里的提交治理干净，不是一个可以 `pip install` 的库，也不是一个 git 别名。
-> 如果你要找的是"在终端里用的清理脚本"，这里不是你要找的地方。
+1. 通用的历史浏览与仓库操作能力——提交历史、提交图、commit 详情、文件级 diff、blame、文件历史、跨修订文件树、暂存与提交、分支与标签、stash、远端同步、合并冲突解决；
+2. 提交规范治理闭环——规范配置、可视化提交表单、commit-msg hook 安装、符合率报告、就地整改、CHANGELOG 生成。
 
-## 它做什么
+闭环部分是这个项目的重点。单独看每一环都有替代品：`git-cliff` 能生成 CHANGELOG，Commitizen 能规范化输入，GitButler 的 virtual branches 能做提交级压缩与拖拽；但把「判定不合规 → 就地改写 → 度量结果 → 生成日志」串在同一个工具里、并且在任何改写之前都能看清将要改什么，目前没有现成方案。
 
-- **批量治理一段连续区间内的提交**：交互式改写（reword / squash / fixup / drop / 重排），
-  自驱临时分支执行，不使用 `git rebase -i`
-- **给出仓库的规范符合率报告**：逐条列出不合规的提交与原因，跳到 diff 就地整改
-- **生成 CHANGELOG**
+## 项目名说明
 
-通用客户端那部分（提交历史、提交图泳道、commit 详情、文件级 diff、blame、文件历史、
-跨修订文件树、筛选与搜索）是这些能力的放大器：任何一次改写之前，你都能看清它将要改什么。
+GitHub 上名为 `git-tidy` 的项目不止本仓库一个，涉及 Git 库的库、CLI 辅助工具、hook 套件都有同名或近名项目。本仓库是一个**桌面应用**，不是可安装的库，也不是 git 别名或 shell 脚本。如果你找的是终端里用的清理脚本，这里不是。
 
-历史改写只支持从 HEAD 往回的**连续区间**。执行前写入还原点，改写类操作执行后校验 tree
-必须一致，随时可回退。压缩与丢弃保留原作者与作者日期。
+## 核心能力
+
+### 历史改写
+
+- 对 HEAD 往回的**任意连续区间**做 reword / squash / fixup / drop / 重排，区间可以位于历史中部。
+- 实现上**不使用 `git rebase -i`**。改为自驱引擎：`rev-list --reverse` 生成 todo，在临时分支上按序执行，每一步做 tree 校验，成功后用 `update-ref` 回到原分支。这样做是为了避开 `GIT_SEQUENCE_EDITOR` 需要 git 反向调用客户端、Windows 上要维护单实例互斥进程、崩溃后 todo 状态难以诊断这三类问题。
+- 区间内任一提交被 remote-tracking ref 包含时拒绝执行，除非用户显式确认改写已推送历史，并接受 `--force-with-lease` 的后果。
+- 区间含 merge commit 时拒绝。
+- squash 与 drop 保留原作者与作者日期。
+- 执行前写入还原点，执行后校验最终 tree 与改写前一致，任何一步失败自动回退，临时分支保留供诊断。
+
+### 规范治理闭环
+
+- **三层配置**：团队规范（仓库根 `git-tidy.config.json`）、个人偏好（app config dir 的 `preferences.json`）、本地索引（app data dir 的 SQLite，WAL + `busy_timeout`）。
+- **兼容既有生态**：没有自研配置时按序从 `commitlint.config.js` / `.commitlintrc*`、`.versionrc.json`、`cliff.toml` 推导等价规范。自研格式是覆盖手段，不是唯一入口，因此对既有项目零迁移成本。
+- **提交表单**：type / scope / subject / body / footer / 任务 ID，实时校验与预览，拦截空 subject、无信息量词、中文冒号、句尾句号等；提交走 `git commit -F`。
+- **commit-msg hook 一键安装**：规则以字面量写进自包含的 POSIX 脚本，安装时快照，不依赖本工具在 PATH 里。检测到 `core.hooksPath` 被 husky 等占用时不覆盖文件，只给共存方案。
+- **符合率报告**：整体符合率、type 分布、原因分桶、按作者与按月趋势，每条不合规明细可跳详情与 diff。被 `--no-verify` 绕过的提交在 git 里不留痕迹，因此只标「疑似绕过」而非断言。
+- **CHANGELOG 生成**：按 Conventional Commits 1.0.0 解析，Breaking 判定涵盖 type 后 `!` 与 `BREAKING CHANGE:` footer，按 feat / fix / perf / refactor 分组、scope 作二级、revert 单独一组；不合规提交不静默丢弃而是单独计数并链回报告。
+
+### 通用客户端能力
+
+提交历史与虚拟滚动、提交图 DAG 泳道、commit 详情、文件级 diff（含图片的并排 / 滑动对位 / 差异叠加三种画法）、逐行与逐 hunk 部分暂存、stash 面板、分支与标签全量操作、cherry-pick / revert / reset、fetch / pull / push 与 force-with-lease、blame（含 `.blame-ignore-revs`）、单文件全部改动记录（`--follow`）、任意历史快照的文件树、跨分支 / 作者 / 时间 / type / 关键词筛选与搜索。
+
+### 合并冲突解决
+
+六类冲突逐块取舍：内容冲突、改删、删改、双 rename、二进制、子模块。共同祖先缺失时降级为两方视图并说明冲突类型，二进制只提供「选一边」。全部标记后按来源续跑（merge 走 `-c core.editor=true git commit`，rebase / cherry-pick 走 `--continue`）。写回内容即用户所见，不做额外加工。
+
+### AI 生成提交信息（可选）
+
+用户自带 OpenAI 兼容端点（可接 OpenAI / DeepSeek / 通义 / 本地 Ollama 等任意 `/chat/completions` 服务），在设置里填 Base URL / API Key / 模型名后启用。
+
+**API Key 一律由用户自己提供**：本项目不内置、不附带、不分发任何 key，空即未启用，未启用时不发任何请求；发出的请求也只会到你填的那个地址。
+
+- 只把 `git diff --cached` 的原文送给模型，与提交按钮要落盘的范围严格一致——模型不该根据还没 `git add` 的草稿编造提交说明。
+- 结果先进弹窗，确认后才填入表单；不提供自动提交。
+- type 只在落在仓库规范白名单内时才写入，否则留空由人选择。
+- diff 过长时截断，并在提示词与界面上都说明；请求带超时；解析不出格式时保留模型原文而不丢弃内容。
+- 报错文本里可能被网关回显的 key 会被抹掉——错误文案会被截图、被粘进 issue。
+
+未配置时不发任何请求，其余功能不受影响。
+
+### 外壳
+
+常驻左栏 + 主区页签（历史 / 文件 / 提交 / 报告 / CHANGELOG / 设置），数字键直达。快捷键面板与按键绑定由 `src/shortcuts.ts` 的同一份数组驱动，文档不会与实现脱节。在终端打开、在资源管理器显示、复制路径均不经 shell 拼接。检查更新只查不装。
+
+## 工程约束
+
+这两条约束不随能力面扩大而放松：
+
+- **一切走系统 git CLI**，不重实现 git，不引入 libgit2 绑定。`src-tauri/src/git/process.rs` 是唯一的 git 子进程出口，固定英文 stderr、UTF-8 输出、`core.quotepath=false`、`--no-pager`，Windows 下附加 `CREATE_NO_WINDOW`。
+- **纯本地，不自建服务端**。出网面被显式枚举：clone / fetch / pull / push / 删除远程分支 / LFS 对象拉取（规划中）/ 更新检查（`api.github.com` 单个 URL，仓库坐标由构建期变量 `GIT_TIDY_REPO` 注入）/ AI 端点（可选，默认关闭，由用户在设置中自行填写）。除此之外全部离线可用。不做遥测、不做账号体系、不代理 AI 请求、不缓存送出的 diff。
+
+安全模型上，威胁前提是 WebView 可以调用任意 command 并传入任意路径。因此：所有 git 命令只接受已注册仓库的 id，路径由 Rust 侧解析；写命令必须在 `write_guard` 白名单内登记，未登记的 action 直接拒绝，前端传不了 argv 数组与文件路径；`treeless` 只读仓库在解析路径那一步就拒绝全部写命令，返回 `ReadOnlyRepo`，不靠前端弹窗；高危操作的前置校验、还原点、tree 校验与回滚都在 Rust 侧兜底，确认文案必须包含受影响的 sha 区间与还原 ref。
+
+前端错误一律走结构化的 `{ code, message, detail }`，前端按 `code` 分支，不解析错误文本。
 
 ## 当前状态
 
-**在开发中，尚无可用版本。** 按需求文档的 M1–M5 分期：
+**开发中，尚无可用发布版本，也没有发布安装包。**
 
-- **M1 读透历史（完）**：注册表与只读浏览、提交历史 + 提交图泳道、ref 可见性与中断态、commit 详情、文件级 diff（含图片三种画法）、blame / 文件历史 / 跨修订文件树、筛选与搜索（筛选态重跑图计算）。
-- **M2 写索引与工作区（完）**：所有写命令经 `write_guard` 的六步——逐行/hunk 暂存、stash、分支与标签、cherry-pick / revert / reset、fetch / pull / push，外加还原点、写操作日志与「撤销上一步」。
-- **M3 危险面（做了一半）**：冲突解决器（六类冲突的逐块取舍与降级视图）已落地；交互式改写的自驱引擎与 todo 面板已落地（**冲突续跑还缺**）；reflog 恢复、GPG / LFS / Git Flow 还没有。
-- **M4 治理闭环（完）**：规范配置三层与提交表单、commit-msg hook 一键安装（`core.hooksPath` 被占时只给共存方案）、符合率报告（绕过只标「疑似」）、CHANGELOG 生成与追加写回（不合规单独计数，不静默丢）。
-- **M5 交付**：设置页（偏好落 `preferences.json`：拉取策略 / Flow 前缀 / 列显示 /自动更新）、快捷键与自文档化的快捷键面板、外部终端与资源管理器入口、diff 语法高亮、**检查更新**（只查不装）已就位。**主题切换、下载式自动更新、打包还没有**；CI 已就位。
+已落地：M1 读透历史、M2 写索引与工作区、M4 治理闭环。M3 危险面完成了冲突解决器与交互式改写引擎。M5 完成设置与偏好层、快捷键与自文档化面板、外部终端与资源管理器入口、diff 语法高亮、检查更新；CI 覆盖 Windows / Linux / macOS 三平台。
 
-上面刻意保留了未完成项：仓库描述的是**目标**，当前状态以本节为准。
+尚未实现：
 
-## 许可
+| 能力 | 说明 |
+|---|---|
+| reflog 浏览与恢复 | 改写后找回旧 HEAD 的兜底入口，当前只能手工执行 git 命令 |
+| GPG 签名状态 | 列表与详情的签名徽标、`commit.gpgsign` 开关 |
+| Git LFS | 未探测 `git lfs`，LFS 指针文件的 diff 走二进制降级视图而非明确报错 |
+| Git Flow | feature / hotfix / release 的命名与收尾流程 |
+| GitHub 通知 | 轮询通知 API 并提示未读讨论 |
+| 主题切换 | 目前只有浅色 token 表 |
+| 下载式自动更新 | 只检查版本，不下载、不替换 |
+| 打包 | `tauri build` 可用，但未产出经过验证的安装包 |
 
-MIT，见 [LICENSE](LICENSE)。
+完整的需求、技术方案、分期边界与验收标准见 [`需求文档.md`](需求文档.md)。
 
 ## 技术栈
 
 - 桌面壳：Tauri v2
-- 前端：Vue 3 + TypeScript + Vite 8，Naive UI，Pinia，vue-router（hash history，适配 Tauri 的 asset 协议）
-- Git 操作：Rust 直接子进程调用本机 `git`，不引入 libgit2 绑定
-
-## 开发环境
-
-- Rust MSVC 工具链（`stable-x86_64-pc-windows-msvc`）
-- Windows 上还需要 VS 2022 Build Tools 的「使用 C++ 的生成工具」workload，Tauri 链接阶段依赖 `link.exe`
-- Linux 上还需要 Tauri 的系统依赖：`libwebkit2gtk-4.1-dev`、`libappindicator3-dev`、`librsvg2-dev`、`patchelf`、`build-essential`、`libxdo-dev`、`libssl-dev`（CI 里已装）
-- WebView2 运行时
-- Node.js 与 git
-
-开发时使用的版本：rustc 1.96.0 / Node 24.18.0 / git 2.54.0。
+- 前端：Vue 3 + TypeScript + Vite，Naive UI，Pinia，vue-router（hash history，适配 Tauri 的 asset 协议）
+- Git 操作：Rust 直接子进程调用本机 `git`
+- 本地存储：rusqlite（bundled SQLite，WAL 模式）
 
 ## 从源码构建
 
-目前没有发布安装包，需要自行构建：
+前置条件：
+
+- Rust MSVC 工具链（`stable-x86_64-pc-windows-msvc`）
+- Windows 上需要 Visual Studio 2022 Build Tools 的「使用 C++ 的生成工具」workload，Tauri 在链接阶段依赖 `link.exe`
+- Linux 上需要 Tauri 的系统依赖：`libwebkit2gtk-4.1-dev`、`libappindicator3-dev`、`librsvg2-dev`、`patchelf`、`build-essential`、`libxdo-dev`、`libssl-dev`
+- WebView2 运行时（Windows）
+- Node.js 与 git
+
+开发时使用的版本：rustc 1.96.0 / Node 24.18.0 / git 2.54.0。
 
 ```bash
 git clone https://github.com/qbbyte/git-tidy.git
@@ -66,21 +119,48 @@ npm run tauri dev      # 启动桌面窗口
 npm run tauri build    # 产出安装包（Windows 走 NSIS）
 ```
 
-## 运行
+## 开发与校验
 
 ```bash
-npm install
-npm run tauri dev      # 启动桌面窗口
-npm run build          # vue-tsc 类型检查 + 前端构建
-npm run check:conflict         # 冲突标记解析器的边界用例
-npm run check:conflict-real    # 拿真 git 造出的冲突草稿跑一遍解析器
-cd src-tauri && cargo test && cargo clippy
+npm run build                # vue-tsc 类型检查 + 前端构建
+npm run check:conflict       # 冲突标记解析器的边界用例
+npm run check:conflict-real  # 用真实 git 造冲突，跑一遍解析器（PowerShell）
+npm run check:highlight      # diff 语法高亮的「拼回去必须等于原文」不变量
+npm run check:ai             # AI 提交信息的 endpoint 归一 / 截断上报 / 解析退化 / type 收敛
+npm run check:tokens         # 设计 token 表
+npm run check:pane           # 面板分隔条
+
+cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
+
+其中 `check:highlight` 守的是一条硬约束：语法高亮只影响观感，不进正确性依赖，但一旦吃掉字符，diff 就在骗人，所以逐行校验「分词后拼回去必须严格等于原文」。
 
 VS Code 用户会自动收到 Volar、tauri-vscode、rust-analyzer 三个扩展推荐。
 
 ## 代码分层
 
-Rust 侧 `git/process.rs` 是唯一的 git 子进程出口，环境固定为英文 stderr、UTF-8 输出、`core.quotepath=false`、`--no-pager`，Windows 下附加 `CREATE_NO_WINDOW`。所有对前端的错误都走 `error.rs` 的结构化 `{ code, message, detail }`，前端按 `code` 分支，不解析错误文本。
+```
+src/                     前端
+  api/                   IPC 封装，调用统一收敛在 api/client.ts
+  stores/                Pinia 状态
+  components/            展示与交互组件
+  views/                 页面
+  lib/                   纯函数（冲突标记解析、语法高亮）
+src-tauri/src/
+  git/                   按能力域拆分的 git 操作，每个模块的注释写明取舍理由
+  write/                 write_guard 六步、还原点、写操作日志
+  commands/              Tauri command 层，参数校验与结构化错误出口
+  store/                 SQLite 索引与 preferences.json
+  error.rs               结构化错误 { code, message, detail }
+```
 
-前端按 `api` / `stores` / `router` / `views` 分层，IPC 调用统一收敛在 `api/client.ts`。
+## 明确不做
+
+- 代码托管平台功能：PR / review / issue / commit 评论。GitHub 只做「通知进来」，不做「操作出去」。
+- 代码编辑器：除冲突解决器外不修改工作区文件内容。
+- 内嵌终端：只拉起系统终端。
+- AI 自动提交、自研模型、代理或缓存 AI 请求：生成结果一律由人确认。
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。
