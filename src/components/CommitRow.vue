@@ -3,7 +3,7 @@ import { computed } from "vue";
 import dayjs from "dayjs";
 import { NTag } from "naive-ui";
 import type { Commit, GraphRow, GraphSegment } from "@/api/commit";
-import { COMMIT_ROW_HEIGHT } from "@/styles/tokens";
+import { COMMIT_ROW_HEIGHT, tokens } from "@/styles/tokens";
 
 /**
  * 只给常见规范 type 上色。type 是否在白名单里由仓库配置判定（需求 6.7），
@@ -62,9 +62,13 @@ const STUB_GAP = ROW_HEIGHT * 0.18;
  * 的 22.5° 空位。同时先后两半各用一档明度（前 8 支深、后 8 支浅），挨得最近的那批
  * 靠明度差兜住。历史上这里是 8 色，第 9 条支线就绕回主线那支蓝，看着像同一条分支。
  *
- * 只有 `strokeColor` 一处消费。**取模的边界要说清**：号是按分支发的，一次全历史遍历能发几百号，
+ * 只有 `graphColor` 一处消费。**取模的边界要说清**：号是按分支发的，一次全历史遍历能发几百号，
  * 所以撞色是常态而不是意外——撞上的两条分支要同时出现在屏幕上才刺眼，而屏幕上同时可见的泳道数
  * 由列宽封顶，远小于 16。真要无限区分只能靠徽标和筛选，不靠颜色。
+ *
+ * **推送状态压过分支身份**：未推送的提交整行改用 `--outgoing`（见 `graphColor`），
+ * 所以同一支线在推出去前后颜色会变——这是有意的取舍，「这条推没推」比「这条在哪个分支」
+ * 更该被一眼看见。
  */
 const PALETTE = [
   "hsl(198, 55%, 58%)", // 主线：原 #6fb3d1 那支蓝，深一档让 2px 线在白底上站得住
@@ -162,8 +166,15 @@ function danglingOf(row?: GraphRow) {
   return row?.segments.filter((segment) => segment.dangling) ?? [];
 }
 
-const strokeColor = (color: number) => PALETTE[color % PALETTE.length];
-const dotColor = () => (props.row ? strokeColor(props.row.color) : "transparent");
+/**
+ * 一段线用什么颜色。
+ *
+ * 未推送的行（「传出的更改」）整行改用固定的 `--outgoing`：这一段是本地还没推出去的，
+ * 推送状态比它落在哪条分支更该被一眼看见。已推送的行照旧按分支槽位取色。
+ */
+const graphColor = (color: number) =>
+  props.commit.unpushed ? tokens.outgoing : PALETTE[color % PALETTE.length];
+const dotColor = () => (props.row ? graphColor(props.row.color) : "transparent");
 
 /** 一行最多画几个徽标。一个合并点能挂十几条远程分支，全画出来这一行就溢出了 */
 const MAX_BADGES = 4;
@@ -218,7 +229,7 @@ function stubOf() {
           v-for="(segment, index) in solidOf(row)"
           :key="index"
           :d="strokeOf(segment)"
-          :stroke="strokeColor(segment.color)"
+          :stroke="graphColor(segment.color)"
           stroke-width="2"
           fill="none"
           stroke-linecap="round"
@@ -227,14 +238,14 @@ function stubOf() {
         <g v-for="(segment, index) in danglingOf(row)" :key="`d${index}`">
           <path
             :d="stubEndOf(segment)"
-            :stroke="strokeColor(segment.color)"
+            :stroke="graphColor(segment.color)"
             stroke-width="2"
             fill="none"
             stroke-linecap="round"
           />
           <path
             :d="stubCapOf(segment)"
-            :stroke="strokeColor(segment.color)"
+            :stroke="graphColor(segment.color)"
             stroke-width="2"
             fill="none"
             stroke-linecap="round"

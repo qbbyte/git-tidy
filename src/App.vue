@@ -16,6 +16,7 @@ import {
   type GlobalThemeOverrides,
 } from "naive-ui";
 import RepoSidebar from "@/components/RepoSidebar.vue";
+import RefPanel from "@/components/RefPanel.vue";
 import SettingsModal from "@/components/SettingsModal.vue";
 import AddRepoModal from "@/components/AddRepoModal.vue";
 import { useReposStore } from "@/stores/repos";
@@ -61,6 +62,53 @@ const sider = usePaneDivider({
   max: 420,
   unit: "px",
 });
+
+/**
+ * 右侧引用栏（分支 / 远程 / 标签）的宽度。
+ *
+ * 像素单位，理由同侧栏：它是一份清单，跟着窗口一起长会喧宾夺主。
+ * 下限 240 是为了让「新建分支」那一排（前缀按钮 + 名字 + 起点 + 建并切换）不用折成三行；
+ * 上限与左栏一样是 420——两边都是导航，谁也不该把中间的内容挤没。
+ */
+const refsPane = usePaneDivider({
+  container: shell,
+  storageKey: "git-tidy:refs-pane:width",
+  fallback: 320,
+  min: 240,
+  max: 420,
+  unit: "px",
+});
+
+/**
+ * 引用栏是否展开。
+ *
+ * 默认收起：它是窗口里的第三栏，开着就必然挤掉列表与 diff 的宽度，
+ * 而分支/标签都属于"要用时才看"。开关放在页头右端的「引用 N」上，计数让人不用展开也知道里面有多少。
+ * 选择记在 localStorage，下次照上次的来——与分栏宽度同一套理由（见 usePaneDivider 的注释）。
+ */
+const REFS_PANE_KEY = "git-tidy:refs-pane:open";
+
+function readRefsOpen(): boolean {
+  // 读不到（首次打开 / 隐私模式抛错）按收起：宁少一栏
+  try {
+    return localStorage.getItem(REFS_PANE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+const refsOpen = ref(readRefsOpen());
+/** 只读浏览的仓库没有写权限，引用栏里全是写入口，干脆整栏不给 */
+const refsPaneVisible = computed(() => refsOpen.value && repos.canCommit);
+
+function toggleRefs() {
+  refsOpen.value = !refsOpen.value;
+  try {
+    localStorage.setItem(REFS_PANE_KEY, refsOpen.value ? "1" : "0");
+  } catch {
+    // 存不下只是下次开窗口回到默认收起
+  }
+}
 
 /**
  * 每种中断态的出口。这一批只给文字指引，等 M2/M3 有「继续 / 中止」按钮再换成按钮。
@@ -268,6 +316,23 @@ function closeError() {
               <!-- 设置不在这里：入口是左下角的齿轮，打开的是弹窗而非页签 -->
             </n-tabs>
             <span class="headline" :title="headline">{{ headline }}</span>
+
+            <!--
+              引用栏的开关。分支 / 远程 / 标签原来挤在左栏的折叠区里，
+              而那里只有两百多像素宽，新建分支表单要折三行、STASH 还被顶出屏幕。
+              计数在这里就能看，不用展开。
+            -->
+            <n-button
+              class="refs-toggle"
+              size="small"
+              quaternary
+              :type="refsOpen ? 'primary' : 'default'"
+              :disabled="!repos.canCommit"
+              :title="repos.canCommit ? '分支 / 远程 / 标签' : '只读浏览的仓库没有写权限，引用栏里的动作都用不了'"
+              @click="toggleRefs"
+            >
+              引用 {{ repos.refs.length }}
+            </n-button>
           </header>
 
           <!-- 中断态常驻、关不掉：它不是一个可以"知道了"的提醒，而是写入口为什么灰着 -->
@@ -354,6 +419,40 @@ function closeError() {
             <router-view />
           </div>
         </section>
+
+        <!--
+          引用栏：分支 / 远程 / 标签，从左侧栏整体搬过来。
+
+          为什么搬：这三块全是写入口（建分支、切分支、抓取/拉取/推送、打标签），
+          在两百多像素宽的侧栅里只能折行堆放——新建分支那一排被挤成三行，
+          整块还不分高度地往下长，把 STASH 和写操作日志顶出屏幕。
+          放右侧是按需展开的第三栏：关着时一分宽度不占，开着时表单有一整栏的对齐空间。
+
+          只在有写权限的仓库上出现（refsPaneVisible）——引用栏里全是写入口。
+        -->
+        <template v-if="refsPaneVisible">
+          <div
+            class="sider-divider"
+            role="separator"
+            aria-orientation="vertical"
+            :aria-valuenow="Math.round(refsPane.size.value)"
+            title="拖动调宽窄，双击恢复默认"
+            @pointerdown="refsPane.onPointerDown"
+            @dblclick="refsPane.reset"
+          />
+
+          <aside class="refs-pane" :style="{ width: `${refsPane.size.value}px` }">
+            <header class="refs-bar">
+              <span class="refs-title">引用 {{ repos.refs.length }}</span>
+              <button class="refs-close" type="button" title="收起引用栏" @click="toggleRefs">
+                ×
+              </button>
+            </header>
+            <div class="refs-body">
+              <ref-panel />
+            </div>
+          </aside>
+        </template>
       </div>
 
       <settings-modal v-model:show="settingsVisible" />
@@ -406,6 +505,73 @@ function closeError() {
   flex-direction: column;
   flex: 1;
   min-width: 0;
+}
+
+/* 引用栏的开关钉在页头右端：页签左对齐之后，右端本来是空的 */
+.refs-toggle {
+  flex: none;
+  margin-left: auto;
+}
+
+/*
+ * 右侧引用栏。表面色与左栏同一支，只是接缝反过来——两栏夹着主区，
+ * 一眼能看出"两边是导航、中间是内容"。
+ */
+.refs-pane {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface-app);
+}
+
+.refs-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 7px 8px 7px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.refs-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refs-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-3);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.refs-close:hover {
+  background: var(--surface-hover);
+  color: var(--text-1);
+}
+
+/* 内容自己滚：分支几百条的仓库是常态，不给整栏跟着长 */
+.refs-body {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 12px 14px 16px;
 }
 
 .bar {

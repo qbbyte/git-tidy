@@ -25,7 +25,7 @@ import { COMMIT_ROW_HEIGHT } from "@/styles/tokens";
 import { usePaneDivider } from "@/composables/usePaneDivider";
 import { provideShell } from "@/shell";
 import { usePrefsStore } from "@/stores/prefs";
-import type { CommitFilter } from "@/api/commit";
+import type { Commit, CommitFilter } from "@/api/commit";
 
 /**
  * 历史页：仓库由常驻侧栏选，这里左半是当前仓库的提交列表 + 图列，右半是选中提交的
@@ -140,6 +140,37 @@ function pick(sha: string) {
 // ---------------------------------------------------------------- 键盘导航
 
 const listRef = ref<VirtualListInst | null>(null);
+
+/** 「传出的更改」分节标题那一行的 key。用一个不可能撞上 sha 的串 */
+const OUTGOING_KEY = "__outgoing__";
+
+/**
+ * 虚拟列表的条目：提交行，外加一个「传出的更改」分节标题。
+ *
+ * 标题插在当前页**第一条未推送提交**的前面：未推送的那批永远是 HEAD 这一侧，
+ * 也就是列表最上面，读起来就是"从这条往上是还没推出去的"（Fork 那个样式）。
+ * 没有上游、或已经全部推出去时，`unpushed` 全为 false，标题自然不出现。
+ *
+ * 标题与提交行**必须同高**：naive 的虚拟列表 `item-size` 只收数字（2.45.3 实测），
+ * 给标题单独一个高度会让后面每一行的位置都算错，所以它也只能占满一行。
+ */
+type CommitListItem =
+  | { kind: "header"; id: string }
+  | { kind: "commit"; id: string; commit: Commit };
+
+const listItems = computed<CommitListItem[]>(() => {
+  const items: CommitListItem[] = commitStore.commits.map((commit) => ({
+    kind: "commit",
+    id: commit.id,
+    commit,
+  }));
+  const first = items.findIndex((item) => item.kind === "commit" && item.commit.unpushed);
+  if (first >= 0) items.splice(first, 0, { kind: "header", id: OUTGOING_KEY });
+  return items;
+});
+
+/** 分节标题右侧挂的当前分支名。游离 HEAD 时没有名字，只显示「传出的更改」 */
+const outgoingBranch = computed(() => repos.repoState?.branch ?? null);
 
 /** 当前选中项在可见列表里的下标；-1 表示还没选 */
 const selectedIndex = computed(() => {
@@ -436,18 +467,35 @@ onBeforeUnmount(() => {
               <span class="muted">正在读这条分支的历史走向，第一次要把父子关系整条走一遍…</span>
             </div>
 
+            <!--
+              ⚠️ 这个插槽里**不能写注释**（标签外面随便写）。vueuc 渲染每一行时只取
+              `$slots.default({ item })[0]` 这一个 vnode，而 dev 模式的模板编译会把
+              HTML 注释保留成注释 vnode（`vite build` 才会剥掉，所以构建期发现不了）。
+              注释一旦排在插槽第一个，它就会顶掉整行——表现是标题和提交行全部消失、
+              列表一片空白，但底部「共 N 条」照常显示，极难反查。
+            -->
             <n-virtual-list
               v-else
               ref="listRef"
-              :items="commitStore.commits"
+              :items="listItems"
               :item-size="COMMIT_ROW_HEIGHT"
               key-field="id"
               class="commit-list"
               @scroll="onScroll"
             >
               <template #default="{ item }">
+                <div
+                  v-if="item.kind === 'header'"
+                  class="outgoing-header"
+                  :style="{ height: `${COMMIT_ROW_HEIGHT}px` }"
+                >
+                  <span class="outgoing-marker" />
+                  <span class="outgoing-label">传出的更改</span>
+                  <code v-if="outgoingBranch" class="outgoing-branch">{{ outgoingBranch }}</code>
+                </div>
                 <commit-row
-                  :commit="item"
+                  v-else
+                  :commit="item.commit"
                   :row="commitStore.rowFor(item.id)"
                   :lanes="commitStore.graphLanes"
                   :selected="item.id === detail.sha"
@@ -625,6 +673,53 @@ onBeforeUnmount(() => {
 
 .placeholder {
   padding-top: 20vh;
+}
+
+/*
+ * 「传出的更改」分节标题。
+ *
+ * 盒模型与 `.commit-row` 逐项对齐：同样的下边框、同样的 0 10px 内边距（高度由模板里
+ * 绑定的 COMMIT_ROW_HEIGHT 给）。差一点点的话，虚拟列表按 item-size 算的位置会
+ * 一行行累积错位——所以这里不是"差不多就行"，是必须和第 30 行完全同形。
+ */
+.outgoing-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* 与图列里未推送提交同色的一个小圆点，一眼把标题和下面那批线绑在一起 */
+.outgoing-marker {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--outgoing);
+}
+
+.outgoing-label {
+  flex: none;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.outgoing-branch {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--badge-branch-text);
+  background: var(--badge-branch-bg);
 }
 
 .raw-output {

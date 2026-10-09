@@ -9,8 +9,7 @@ import { NIcon } from "naive-ui";
 import Settings from "@vicons/tabler/es/Settings";
 import { provideShell } from "@/shell";
 import { RADIUS_CONTROL } from "@/styles/tokens";
-import { NButton, NCollapse, NCollapseItem, NDropdown, NEmpty, NInput, type DropdownOption } from "naive-ui";
-import RefPanel from "@/components/RefPanel.vue";
+import { NButton, NDropdown, NEmpty, NInput, type DropdownOption } from "naive-ui";
 import RewritePanel from "@/components/RewritePanel.vue";
 import StashPanel from "@/components/StashPanel.vue";
 import OpJournal from "@/components/OpJournal.vue";
@@ -44,8 +43,6 @@ const repoQuery = ref("");
 const showRepoInfo = ref(false);
 /** 当前开着动作菜单的仓库行。菜单靠它控制自身可见 */
 const repoMenu = ref<number | null>(null);
-/** 引用面板默认收起：它占侧栅里最高的一块，而分支列表属于“要用时才看” */
-const refsOpen = ref<string[]>([]);
 
 /** 仓库列表超过这个数才给搜索框——三个仓库时它只是一条多余的输入框 */
 const SEARCH_THRESHOLD = 8;
@@ -102,11 +99,6 @@ const trackStale = computed(() => {
 const interruptText = computed(() =>
   repos.interrupted ? INTERRUPT_LABEL[repos.interrupt] : "正常",
 );
-
-/**
- * 本仓库的引用列表与它们的写入口都在 `RefPanel` 里：读的那一列常驻几十条，
- * 写入口悬停才露出来（§7.10 的确认强度与 §3 的期边界）。
- */
 
 function startRename(repo: Repo) {
   editing.value = { id: repo.id, name: repo.name };
@@ -241,7 +233,7 @@ watch(
     <!--
       钉住区：分支、跟踪、HEAD、待提交条数。
       这些是每时每刻都要看的东西，原来它们混在下面的滚动流里——
-      而那个流里有仓库列表、引用列表、stash、写操作日志，一屏装不下，
+      而那个流里有仓库列表、stash、写操作日志，一屏装不下，
       于是「我现在在哪个分支」要靠向上滚才能找到。
     -->
     <div v-if="repos.info" class="pinned" :class="{ switching: repos.switching }">
@@ -365,18 +357,11 @@ watch(
     </div>
 
     <!--
-      引用列表读自 §7.3 那一次 for-each-ref，不另起进程。
-      **写**操作拆到 RefPanel：读的这一列常驻摆几十个分支，写入口悬停才露出来，
-      而且每一个都要自己的确认（§7.10）。
-
-      默认收起：它是侧栅里最高的一块（内部已占 30vh），而分支列表属于“要用时才看”。
-      标题上的计数让人知道里面有多少，不用展开就知道。
+      引用（分支 / 远程 / 标签）原来在这里：一个可折叠区块，展开后不分高度地往下长，
+      在两百多像素宽的侧栅里把新建分支表单挤成两三行，还把下面的 STASH 顶出屏幕。
+      现在整块挪到右边的引用栏（App.vue 的 `.refs-pane`，页头右端的「引用 N」开合），
+      侧栅只留导航与只读摘要——它本来就只该干这个。
     -->
-    <n-collapse v-if="repos.canCommit" v-model:value="refsOpen" arrow-placement="right">
-      <n-collapse-item :title="`引用 ${repos.refs.length}`" name="refs">
-        <ref-panel />
-      </n-collapse-item>
-    </n-collapse>
 
     <!-- 冲突解决器只在有未合并文件时占地方。§7.13：它在中断态里才有用 -->
     <div v-if="writes.hasConflicts" class="block">
@@ -781,58 +766,6 @@ watch(
   display: inline-block;
   width: 56px;
   color: var(--text-3);
-}
-
-.ref-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  /* 分支几百条的仓库是常态：列表自己滚，别把上面的仓库列表和状态摘要顶出侧栏 */
-  flex: none;
-  max-height: 30vh;
-  overflow: auto;
-}
-
-.ref-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 1px 2px;
-}
-
-.ref-row.current .ref-name {
-  font-weight: 600;
-}
-
-.ref-dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.ref-dot.on {
-  background: var(--accent);
-}
-
-.ref-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ref-track {
-  flex: none;
-  font-size: 11px;
-  opacity: 0.7;
-}
-
-/* .warn 下面那行是给全组件用的，这里要压掉自身的 opacity，否则警告色被冲淡到看不出来 */
-.ref-track.warn {
-  opacity: 1;
 }
 
 .path {

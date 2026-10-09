@@ -45,6 +45,16 @@ export const tokens = {
   accentHover: "#0a6ae0",
   accentPressed: "#0059c8",
 
+  /**
+   * 「传出的更改」：本地还没推出去的提交，在图列里统一用这一支紫。
+   *
+   * 它只能有一个值、不能进分支调色板（`CommitRow.vue` 的 PALETTE）——那个调色板是按
+   * 分支发号的，混进去就会被某条分支占用。选紫是因为它在 PALETTE 的 16 个槽位里
+   * 没有同色：最接近的 hsl(288,…) 偏品红、hsl(243,…) 偏靛蓝，都隔得开。
+   * 8b5cf6 在白底上约 4.6:1，2px 线站得住。
+   */
+  outgoing: "#8b5cf6",
+
   // ---- 状态色。四个，各有一个底色 + 一个文字色
   warnBg: "#fff4e5",
   warnBorder: "#f0dcb0",
