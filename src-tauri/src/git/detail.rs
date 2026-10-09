@@ -90,8 +90,7 @@ pub fn read(repo: &Path, sha: &str) -> Result<Detail, GitError> {
     let records = parse_raw(&raw)?;
 
     let count_args = record_args(sha, merge, "--numstat");
-    let numstat = process::run(Some(repo), &process::strs(&count_args))?
-        .expect_success()?;
+    let numstat = process::run(Some(repo), &process::strs(&count_args))?.expect_success()?;
     let counts = counts_for(&records, &numstat)?;
 
     let mut changes = Vec::with_capacity(records.len());
@@ -103,9 +102,8 @@ pub fn read(repo: &Path, sha: &str) -> Result<Detail, GitError> {
         let binary = added.is_none() && deleted.is_none();
         // 先算再搬：下面 `Some(record.old_mode)` 那两行会把模式串搬进 Change 里，
         // 搬完再比就是 use-after-move
-        let mode_only = record.old_blob == record.new_blob
-            && record.old_mode != record.new_mode
-            && !gitlink;
+        let mode_only =
+            record.old_blob == record.new_blob && record.old_mode != record.new_mode && !gitlink;
         // 子模块那两端是提交号，界面要照着 §7.4 摆出来给人对比；普通文件的 blob 号不填
         let oids = if gitlink {
             (record.old_blob.clone(), record.new_blob.clone())
@@ -178,11 +176,8 @@ fn record_args(sha: &str, merge: bool, format: &str) -> Vec<String> {
 ///
 /// diff 那一层也要它来判断合并提交（合并的 `show` 什么都不输出），所以给到 crate 内。
 pub(crate) fn parents(repo: &Path, sha: &str) -> Result<Vec<String>, GitError> {
-    let stdout = process::run(
-        Some(repo),
-        &["rev-list", "--parents", "-n", "1", sha],
-    )?
-    .expect_success()?;
+    let stdout =
+        process::run(Some(repo), &["rev-list", "--parents", "-n", "1", sha])?.expect_success()?;
     let line = stdout.lines().next().unwrap_or_default();
     let mut fields = line.split_whitespace();
     // 第一个字段是提交自己，剩下的才是父
@@ -240,7 +235,11 @@ fn parse_raw(stdout: &str) -> Result<Vec<Raw>, GitError> {
             new_mode: (*new_mode).to_string(),
             old_blob: full_sha(old_blob),
             new_blob: full_sha(new_blob),
-            old_path: if want == 2 { Some(paths[0].to_string()) } else { None },
+            old_path: if want == 2 {
+                Some(paths[0].to_string())
+            } else {
+                None
+            },
             path: path.to_string(),
         });
     }
@@ -362,9 +361,9 @@ fn count(raw: &str) -> Result<Option<usize>, GitError> {
     if raw == "-" {
         return Ok(None);
     }
-    raw.parse::<usize>().map(Some).map_err(|_| {
-        parse_failure(&[raw], 0, &format!("numstat 的行数不是数字：{raw}"))
-    })
+    raw.parse::<usize>()
+        .map(Some)
+        .map_err(|_| parse_failure(&[raw], 0, &format!("numstat 的行数不是数字：{raw}")))
 }
 
 /// `-z` 输出的记录以 NUL 结尾，所以整串末尾多出一个空 token。
@@ -476,8 +475,11 @@ mod tests {
 
         write(dir.path(), "keep.txt", "one\nTWO CHANGED\nthree\nextra\n");
         fs::remove_file(dir.path().join("drop.txt")).expect("rm");
-        fs::rename(dir.path().join("old name.txt"), dir.path().join("new name.txt"))
-            .expect("rename");
+        fs::rename(
+            dir.path().join("old name.txt"),
+            dir.path().join("new name.txt"),
+        )
+        .expect("rename");
         write(dir.path(), "new name.txt", "alpha\nbeta\n");
         write(dir.path(), "中文.txt", "第一行\n第二行\n");
         git_in(dir.path(), &["add", "-A"]);
@@ -561,7 +563,9 @@ mod tests {
         write(other.path(), "a.txt", "one\n");
         git_in(other.path(), &["add", "-A"]);
         commit(other.path(), "chore: 子仓库一条");
-        let first = git_in(other.path(), &["rev-parse", "HEAD"]).trim().to_string();
+        let first = git_in(other.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
 
         let dir = repo();
         write(dir.path(), "keep.txt", "one\n");
@@ -571,7 +575,12 @@ mod tests {
         // 先让 vendor 作为一个 gitlink 落进历史，下一跳才有"两侧都有值"的比较
         git_in(
             dir.path(),
-            &["update-index", "--add", "--cacheinfo", &format!("160000,{first},vendor")],
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{first},vendor"),
+            ],
         );
         commit(dir.path(), "chore: 挂上子模块");
 
@@ -581,7 +590,12 @@ mod tests {
 
         git_in(
             dir.path(),
-            &["update-index", "--add", "--cacheinfo", &format!("160000,{moved},vendor")],
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{moved},vendor"),
+            ],
         );
         let sha = commit(dir.path(), "chore: 抬一下子模块指针");
 
@@ -592,7 +606,12 @@ mod tests {
         assert_eq!(change.old_mode.as_deref(), Some(GITLINK_MODE));
         assert_eq!(change.new_mode.as_deref(), Some(GITLINK_MODE));
         // 界面要摆出"从哪个子模块提交抬到哪个"，所以两个提交号都得是全 40 位
-        assert_eq!(change.old_oid.as_deref(), Some(first.as_str()), "{:?}", change);
+        assert_eq!(
+            change.old_oid.as_deref(),
+            Some(first.as_str()),
+            "{:?}",
+            change
+        );
         assert_eq!(change.new_oid.as_deref(), Some(moved.as_str()));
         // 子模块那个提交对象不在本仓库里，大小查不到是预期的，界面退化成"指针变更"
         assert_eq!(change.old_size, None);
@@ -625,14 +644,20 @@ mod tests {
             dir.path(),
             &["merge", "--no-ff", "-q", "-m", "chore: 合并支线", "side"],
         );
-        let sha = git_in(dir.path(), &["rev-parse", "HEAD"]).trim().to_string();
+        let sha = git_in(dir.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
 
         let detail = read(dir.path(), &sha).expect("合并提交的 detail");
         assert_eq!(detail.parents.len(), 2);
         assert!(detail.merge);
         // 对第一父（主干那条）的差集只有支线带进来的文件
         let paths: Vec<&str> = detail.changes.iter().map(|c| c.path.as_str()).collect();
-        assert_eq!(paths, vec!["side.txt"], "合并的清单该只对第一父：{detail:?}");
+        assert_eq!(
+            paths,
+            vec!["side.txt"],
+            "合并的清单该只对第一父：{detail:?}"
+        );
         assert!(matches!(detail.changes[0].status, ChangeStatus::Add));
         assert_eq!(detail.changes[0].added, Some(1));
     }
@@ -684,7 +709,7 @@ mod tests {
             &records,
             "2\t1\tkeep.txt\x000\t0\t\x00old.txt\x00new.txt\x00extra\x00",
         )
-            .expect_err("该报错");
+        .expect_err("该报错");
         let text = format!("{err:?}");
         assert!(text.contains("字段数对不上"), "报错要说清为什么：{text}");
     }

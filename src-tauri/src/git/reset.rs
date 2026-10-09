@@ -79,16 +79,11 @@ pub fn revert(repo: &Path, sha: &str, mainline: Option<usize>) -> Result<(), Git
 
 /// 移动 HEAD。`target` 默认为 HEAD，即"撤销最近若干次提交"。
 pub fn reset(repo: &Path, mode: ResetMode, target: &str) -> Result<(), GitError> {
-    let out = process::run(
-        Some(repo),
-        &["reset", mode.flag(), target],
-    )?;
+    let out = process::run(Some(repo), &["reset", mode.flag(), target])?;
     if out.success {
         return Ok(());
     }
-    Err(GitError::GitFailed {
-        stderr: out.stderr,
-    })
+    Err(GitError::GitFailed { stderr: out.stderr })
 }
 
 /// 放弃一次冲突中的序列。cherry-pick / revert / rebase 各自有对应的 `--abort`，
@@ -109,9 +104,7 @@ pub fn abort(repo: &Path) -> Result<AbortOutcome, GitError> {
     };
     let out = process::run(Some(repo), &[command, "--abort"])?;
     if !out.success {
-        return Err(GitError::GitFailed {
-            stderr: out.stderr,
-        });
+        return Err(GitError::GitFailed { stderr: out.stderr });
     }
     Ok(AbortOutcome {
         aborted: kind.to_string(),
@@ -245,7 +238,10 @@ mod tests {
         must(path, &["checkout", "-q", "-b", "side"]);
         commit(path, "b.txt", "支线\n", "feat: 支线");
         must(path, &["checkout", "-q", "main"]);
-        must(path, &["merge", "--no-ff", "-q", "-m", "chore: 合并", "side"]);
+        must(
+            path,
+            &["merge", "--no-ff", "-q", "-m", "chore: 合并", "side"],
+        );
         let merge = must(path, &["rev-parse", "HEAD"]);
 
         // 不给主线号：git 自己会拒绝（fatal: commit ... is a merge but no -m option was given）
@@ -268,7 +264,11 @@ mod tests {
         let tip = must(path, &["rev-parse", "HEAD"]);
 
         reset(path, ResetMode::Soft, &base).expect("soft");
-        assert_eq!(must(path, &["rev-parse", "HEAD"]), base, "soft 保留提交之外的指针移动");
+        assert_eq!(
+            must(path, &["rev-parse", "HEAD"]),
+            base,
+            "soft 保留提交之外的指针移动"
+        );
         assert_eq!(
             must(path, &["status", "--porcelain"]),
             "M  a.txt",
@@ -280,8 +280,14 @@ mod tests {
         let base2 = must(path2, &["rev-parse", "HEAD"]);
         commit(path2, "a.txt", "3\n", "fix: 第三次");
         reset(path2, ResetMode::Hard, &base2).expect("hard");
-        assert_eq!(fs::read_to_string(path2.join("a.txt")).expect("read"), "1\n");
-        assert!(must(path2, &["status", "--porcelain"]).is_empty(), "hard 把改动也扔掉");
+        assert_eq!(
+            fs::read_to_string(path2.join("a.txt")).expect("read"),
+            "1\n"
+        );
+        assert!(
+            must(path2, &["status", "--porcelain"]).is_empty(),
+            "hard 把改动也扔掉"
+        );
         let _ = tip;
     }
 

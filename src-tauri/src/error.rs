@@ -25,9 +25,7 @@ pub enum GitError {
     NothingStaged,
     /// 仓库停在 merge / rebase / cherry-pick / revert 的中断态上（§7.3）。
     /// 哪一种由 state 带出去：界面据此决定提示条文案，也据此禁用写入口。
-    OperationInProgress {
-        state: crate::git::refs::Interrupt,
-    },
+    OperationInProgress { state: crate::git::refs::Interrupt },
     /// 前置校验不通过：工作区脏、中断态之外的状态不满足写命令的要求。
     /// `detail` 说明是哪一条，用户照着就能改，不用猜。
     NotClean { detail: String },

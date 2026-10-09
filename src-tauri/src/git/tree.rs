@@ -113,8 +113,8 @@ pub fn content(repo: &Path, rev: &str, path: &str) -> Result<Content, GitError> 
         });
     }
 
-    let bytes = process::run_bytes(Some(repo), &["cat-file", "blob", &object], &[])?
-        .expect_success()?;
+    let bytes =
+        process::run_bytes(Some(repo), &["cat-file", "blob", &object], &[])?.expect_success()?;
     // 文本判定看前 8 KB：完整扫一遍几 MB 的文件只为了找 NUL 不值当，
     // 而没有 NUL 的二进制（PSD 之类）本来就超出这个视图的能力范围
     let window = &bytes[..bytes.len().min(8192)];
@@ -215,7 +215,14 @@ mod tests {
         let child_head = git_in(&child, &["rev-parse", "HEAD"]);
         git_in(
             repo_path,
-            &["update-index", "--add", "--cacheinfo", "160000", &child_head, "sub"],
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000",
+                &child_head,
+                "sub",
+            ],
         );
         git_in(repo_path, &["commit", "-q", "-m", "feat: 加子模块"]);
 
@@ -240,7 +247,11 @@ mod tests {
 
         let text = content(repo_path, "HEAD", "a.txt").expect("读正文");
         assert!(!text.binary);
-        assert_eq!(text.text.as_deref(), Some("第一行\r\n第二行\n"), "CRLF 原样");
+        assert_eq!(
+            text.text.as_deref(),
+            Some("第一行\r\n第二行\n"),
+            "CRLF 原样"
+        );
         assert!(!text.truncated);
         assert_eq!(text.size, 21, "三个汉字一行 + CRLF + 三个汉字 + 换行");
 

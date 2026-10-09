@@ -97,7 +97,9 @@ pub fn finish(
 
 /// 某个仓库最近的若干条，新的在前。界面上的"操作记录"就按这个顺序显示。
 pub fn recent(conn: &Connection, repo_id: i64, limit: usize) -> Result<Vec<WriteOp>, GitError> {
-    let sql = format!("SELECT {COLUMNS} FROM write_op WHERE repo_id = ?1 ORDER BY ts DESC, id DESC LIMIT ?2");
+    let sql = format!(
+        "SELECT {COLUMNS} FROM write_op WHERE repo_id = ?1 ORDER BY ts DESC, id DESC LIMIT ?2"
+    );
     let mut stmt = conn.prepare(&sql).map_err(sqlite_failure)?;
     let rows = stmt
         .query_map(rusqlite::params![repo_id, limit as i64], |row| {
@@ -117,7 +119,8 @@ pub fn recent(conn: &Connection, repo_id: i64, limit: usize) -> Result<Vec<Write
         })
         .map_err(sqlite_failure)?;
 
-    rows.collect::<Result<Vec<WriteOp>, _>>().map_err(sqlite_failure)
+    rows.collect::<Result<Vec<WriteOp>, _>>()
+        .map_err(sqlite_failure)
 }
 
 /// 最近一条。找不到就是"没有可撤销的写操作"，不是错误。
@@ -148,8 +151,16 @@ mod tests {
         let (_dir, db) = db();
         let conn = crate::store::db::lock(&db.conn);
 
-        let id = start(&conn, 1, "branch_delete", Some("side"), None, "refs/git-tidy/backup-1", Some("aaa"))
-            .expect("start");
+        let id = start(
+            &conn,
+            1,
+            "branch_delete",
+            Some("side"),
+            None,
+            "refs/git-tidy/backup-1",
+            Some("aaa"),
+        )
+        .expect("start");
         // 第 2 步之后就该查得到：进程崩在执行中间也要留得住"当时动了什么"
         let pending = last(&conn, 1).expect("last").expect("有一条");
         assert_eq!(pending.id, id);
@@ -166,12 +177,33 @@ mod tests {
     fn every_repo_keeps_its_own_log() {
         let (_dir, db) = db();
         let conn = crate::store::db::lock(&db.conn);
-        start(&conn, 1, "stash_push", None, None, "refs/git-tidy/backup-1", None).expect("1");
-        start(&conn, 2, "fetch", None, None, "refs/git-tidy/backup-2", None).expect("2");
+        start(
+            &conn,
+            1,
+            "stash_push",
+            None,
+            None,
+            "refs/git-tidy/backup-1",
+            None,
+        )
+        .expect("1");
+        start(
+            &conn,
+            2,
+            "fetch",
+            None,
+            None,
+            "refs/git-tidy/backup-2",
+            None,
+        )
+        .expect("2");
 
         assert_eq!(recent(&conn, 1, 10).expect("recent").len(), 1);
         assert_eq!(recent(&conn, 2, 10).expect("recent")[0].action, "fetch");
-        assert!(last(&conn, 3).expect("last").is_none(), "没写过的仓库没有可撤销项");
+        assert!(
+            last(&conn, 3).expect("last").is_none(),
+            "没写过的仓库没有可撤销项"
+        );
     }
 
     #[test]
@@ -191,8 +223,24 @@ mod tests {
     fn a_rolled_back_entry_is_marked_as_such() {
         let (_dir, db) = db();
         let conn = crate::store::db::lock(&db.conn);
-        let id = start(&conn, 1, "reset", None, None, "refs/git-tidy/backup-1", Some("aaa")).expect("start");
-        finish(&conn, id, Status::RolledBack, Some("aaa"), Some("已恢复到 aaa")).expect("finish");
+        let id = start(
+            &conn,
+            1,
+            "reset",
+            None,
+            None,
+            "refs/git-tidy/backup-1",
+            Some("aaa"),
+        )
+        .expect("start");
+        finish(
+            &conn,
+            id,
+            Status::RolledBack,
+            Some("aaa"),
+            Some("已恢复到 aaa"),
+        )
+        .expect("finish");
 
         let entry = last(&conn, 1).expect("last").expect("有一条");
         assert_eq!(entry.status, Status::RolledBack);

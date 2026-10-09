@@ -31,15 +31,11 @@ impl Draft {
 
     /// 最终信息：主题 + 空行 + 正文 + 空行 + 脚注，末尾带一个换行。
     pub fn compose(&self) -> String {
-        let parts = [
-            self.subject.trim(),
-            self.body.trim(),
-            self.footer.trim(),
-        ]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+        let parts = [self.subject.trim(), self.body.trim(), self.footer.trim()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         format!("{parts}\n")
     }
 }
@@ -98,7 +94,8 @@ fn temp_message(draft: &Draft) -> Result<String, GitError> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.subsec_nanos())
         .unwrap_or_default();
-    let path = std::env::temp_dir().join(format!("git-tidy-msg-{}-{unique}.txt", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("git-tidy-msg-{}-{unique}.txt", std::process::id()));
     std::fs::write(&path, draft.compose())
         .map_err(|err| GitError::Internal(format!("写提交信息临时文件失败：{err}")))?;
     Ok(path.to_string_lossy().into_owned())
@@ -219,7 +216,11 @@ mod tests {
             body: String::new(),
             footer: "Refs: TIDY-7".into(),
         };
-        assert!(preview(&spec, &draft).conformant, "{:?}", preview(&spec, &draft).violations);
+        assert!(
+            preview(&spec, &draft).conformant,
+            "{:?}",
+            preview(&spec, &draft).violations
+        );
     }
 
     /// §7.3：中断态下的 `git commit` 语义是"给这次合并收尾"，产物是一个两个父的合并提交，
@@ -245,7 +246,8 @@ mod tests {
         let merged = process::run(Some(dir.path()), &["merge", "side"]).expect("spawn merge");
         assert!(!merged.success, "这次合并必须冲突：{}", merged.stdout);
 
-        let err = match create(dir.path(), &Spec::default(), &draft("feat: 中断里还想提交")) {
+        let err = match create(dir.path(), &Spec::default(), &draft("feat: 中断里还想提交"))
+        {
             Ok(commit) => panic!("合并中断时不该提交成功：{}", commit.id),
             Err(err) => err,
         };
@@ -288,6 +290,9 @@ mod tests {
         };
         create(dir.path(), &Spec::default(), &draft).expect("提交");
         let raw = git(dir.path(), &["log", "-1", "--format=%B"]);
-        assert_eq!(raw, "feat: 支持中文正文\n\n第一段：说明动机。\n\n第二段：列出影响面。\n\nRefs: TIDY-1");
+        assert_eq!(
+            raw,
+            "feat: 支持中文正文\n\n第一段：说明动机。\n\n第二段：列出影响面。\n\nRefs: TIDY-1"
+        );
     }
 }

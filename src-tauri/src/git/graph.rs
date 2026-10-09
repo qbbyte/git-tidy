@@ -402,7 +402,10 @@ mod tests {
         // 这两行的线段里没有一段落到自己圆点那一列，前端必须补那一小截，不补就是断口
         for index in [1, 2] {
             assert!(
-                !rows[index].segments.iter().any(|s| s.to == rows[index].lane),
+                !rows[index]
+                    .segments
+                    .iter()
+                    .any(|s| s.to == rows[index].lane),
                 "第 {index} 行已经有线接到圆点上，不该再补一段：{:?}",
                 rows[index].segments
             );
@@ -485,12 +488,7 @@ mod tests {
 
     #[test]
     fn an_octopus_merge_gives_every_extra_parent_a_lane() {
-        let walk = entries(&[
-            ("m", &["a", "b", "c"]),
-            ("a", &[]),
-            ("b", &[]),
-            ("c", &[]),
-        ]);
+        let walk = entries(&[("m", &["a", "b", "c"]), ("a", &[]), ("b", &[]), ("c", &[])]);
         let rows = plan(&walk);
 
         assert_eq!(
@@ -503,9 +501,7 @@ mod tests {
         assert_eq!(rows[2].lane, 1);
         assert_eq!(rows[3].lane, 2);
         assert_eq!(
-            rows.iter()
-                .map(|row| row.color)
-                .collect::<Vec<_>>(),
+            rows.iter().map(|row| row.color).collect::<Vec<_>>(),
             vec![0, 0, 1, 2],
             "八爪鱼的每一条支线各一支颜色"
         );
@@ -600,8 +596,7 @@ mod tests {
             assert!(
                 reached,
                 "第 {index} 行（{}）的圆点落在泳道 {}，但它上面没有任何连线落到这一列",
-                row.sha,
-                row.lane
+                row.sha, row.lane
             );
         }
     }
@@ -624,21 +619,16 @@ mod tests {
                 let Some(edge) = edge else {
                     panic!(
                         "{} 到 {parent}（泳道 {}）之间没画线：{:?}",
-                        row.sha,
-                        rows[below].lane,
-                        rows[index].segments
+                        row.sha, rows[below].lane, rows[index].segments
                     );
                 };
                 // 接口处不许换色：父提交紧挨在下一行时，那段线的颜色必须等于它圆点的颜色。
                 // 颜色一换，两根线在同一个位置上错开，看着还是断的（这是断口的第二种画法）。
                 if position == 0 && below == index + 1 {
                     assert_eq!(
-                        edge.color,
-                        rows[below].color,
+                        edge.color, rows[below].color,
                         "{} 到 {parent} 的那段线换了颜色：线 {:?} / 下面的圆点 {:?}",
-                        row.sha,
-                        edge.color,
-                        rows[below].color
+                        row.sha, edge.color, rows[below].color
                     );
                 }
             }
@@ -705,7 +695,11 @@ mod tests {
         };
         assert_eq!(color_of("s2"), color_of("s1"), "同一条支线一支颜色");
         assert_eq!(color_of("b"), color_of("m2"), "b 往下仍然归主线");
-        assert_ne!(color_of("s1"), color_of("b"), "支线汇进的那一列换了主色，两者不该同色");
+        assert_ne!(
+            color_of("s1"),
+            color_of("b"),
+            "支线汇进的那一列换了主色，两者不该同色"
+        );
     }
 
     #[test]
@@ -725,11 +719,7 @@ mod tests {
         assert_colors_follow_branches(&rows, &walk);
 
         let head_page = page(&rows, 0, 2);
-        assert_eq!(
-            ids(&head_page.rows),
-            vec!["m", "s"],
-            "第 0 页从头两条开始"
-        );
+        assert_eq!(ids(&head_page.rows), vec!["m", "s"], "第 0 页从头两条开始");
         assert_eq!(head_page.lanes, 2);
 
         let tail_page = page(&rows, 4, 10);
@@ -760,26 +750,33 @@ mod tests {
             .expect("父被筛掉的那一行要有一段截断边");
         assert_eq!(stub.from, rows[1].lane, "截断边从本行圆点出发");
         assert_ne!(
-            stub.to,
-            rows[2].lane,
+            stub.to, rows[2].lane,
             "截断边不能落到下一行那一列——那就是连错提交"
         );
         assert!(
-            !rows.iter().skip(1).any(|row| row.segments.iter().any(|s| !s.dangling && s.to == stub.to)),
+            !rows
+                .iter()
+                .skip(1)
+                .any(|row| row.segments.iter().any(|s| !s.dangling && s.to == stub.to)),
             "截断边那一列下面不该再有竖线接着"
         );
         assert!(
             width(&rows) >= 2,
             "截断边要独占一条泳道，否则会和别人的线混在一列"
         );
-        assert!(rows.iter().all(|row| row.sha != "x"), "被筛掉的提交不该出现在图里");
+        assert!(
+            rows.iter().all(|row| row.sha != "x"),
+            "被筛掉的提交不该出现在图里"
+        );
     }
 
     /// 未筛选的历史里不出现任何截断边：它是筛选态才有的画法
     #[test]
     fn an_unfiltered_walk_has_no_dangling_segment() {
         let rows = plan(&entries(&[("b", &["a"]), ("a", &[])]));
-        assert!(rows.iter().all(|row| row.segments.iter().all(|s| !s.dangling)));
+        assert!(rows
+            .iter()
+            .all(|row| row.segments.iter().all(|s| !s.dangling)));
         assert_eq!(lanes_of(&rows[0]), vec![(0, 0)]);
     }
 
@@ -839,7 +836,10 @@ mod tests {
             ],
         );
         git(repo, &["checkout", "-q", "main"]);
-        git(repo, &["merge", "--no-ff", "-q", "-m", "merge side", "side"]);
+        git(
+            repo,
+            &["merge", "--no-ff", "-q", "-m", "merge side", "side"],
+        );
 
         let history = history(repo).expect("读历史");
         assert_eq!(history.len(), 5, "基线 3 条 + 支线 1 条 + 合并 1 条");
@@ -882,9 +882,7 @@ mod tests {
             ],
         );
 
-        let sha = head_sha(repo)
-            .expect("读 sha")
-            .expect("刚提交完应有 HEAD");
+        let sha = head_sha(repo).expect("读 sha").expect("刚提交完应有 HEAD");
         assert_eq!(sha.len(), 40, "缓存键必须是完整 sha");
         assert_eq!(
             history(repo).expect("读历史")[0].sha,
@@ -915,10 +913,14 @@ mod tests {
         let sha = "d17a5a3aa7ad14e4b6ddc4bb2b7cd2a25a0e0aa5";
         let first = "0b7c1e9f2a3d4e5f60718293a4b5c6d7e8f90a1b";
         let second = "1c8d2f0a3b4c5d6e7f8091a2b3c4d5e6f7a8b9c0";
-        let parsed = parse(format!("{sha}{FIELD_SEP}{first} {second}\0").as_str()).expect("该解析成功");
+        let parsed =
+            parse(format!("{sha}{FIELD_SEP}{first} {second}\0").as_str()).expect("该解析成功");
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].sha, sha);
-        assert_eq!(parsed[0].parents, vec![first.to_string(), second.to_string()]);
+        assert_eq!(
+            parsed[0].parents,
+            vec![first.to_string(), second.to_string()]
+        );
         assert!(!parsed[0].dangling, "未筛选的历史没有截断边");
     }
 

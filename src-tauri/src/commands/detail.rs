@@ -57,7 +57,15 @@ mod tests {
     /// 挡的就是这类值：它们会带着前导横线走到 git 那儿
     #[test]
     fn anything_that_is_not_hex_is_refused() {
-        for bad in ["", "   ", "--all", "HEAD", "0123456789abcdef-", "a b", &"a".repeat(65)] {
+        for bad in [
+            "",
+            "   ",
+            "--all",
+            "HEAD",
+            "0123456789abcdef-",
+            "a b",
+            &"a".repeat(65),
+        ] {
             let err = check_sha(bad).expect_err("该拒绝：{bad}");
             assert!(format!("{err:?}").contains("合法的提交号"), "{err:?}");
         }

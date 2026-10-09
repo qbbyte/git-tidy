@@ -18,7 +18,10 @@ pub async fn worktree_file_diff(
     path: String,
     ignore_white_space: bool,
 ) -> Result<diff::Diff, GitError> {
-    let repo_path = query(state.inner().clone(), move |conn| repos::ensure_worktree(conn, id)).await?;
+    let repo_path = query(state.inner().clone(), move |conn| {
+        repos::ensure_worktree(conn, id)
+    })
+    .await?;
 
     tauri::async_runtime::spawn_blocking(move || {
         diff::read_worktree(&repo_path, &path, ignore_white_space)

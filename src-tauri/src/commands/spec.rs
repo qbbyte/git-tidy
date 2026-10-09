@@ -51,7 +51,13 @@ pub async fn commit_scopes(state: State<'_, Arc<Db>>, id: i64) -> Result<Vec<Str
 }
 
 fn scopes_from_history(repo: &std::path::Path) -> Result<Vec<String>, GitError> {
-    let page = log::list(repo, 0, SCOPE_SCAN_LIMIT, &log::Filter::default(), &Spec::default())?;
+    let page = log::list(
+        repo,
+        0,
+        SCOPE_SCAN_LIMIT,
+        &log::Filter::default(),
+        &Spec::default(),
+    )?;
     let mut counts: Vec<(String, usize)> = Vec::new();
     for commit in page.commits {
         let Some(scope) = commit.summary.scope else {

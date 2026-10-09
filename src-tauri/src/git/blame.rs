@@ -49,12 +49,7 @@ pub struct Blame {
 ///
 /// `ignore_revs` 由界面传入（用户勾选的修订），`.blame-ignore-revs` 自动生效——
 /// 两者都走 git 自己的忽略机制，所以"忽略之后"的重算逻辑不用我们再实现一遍。
-pub fn read(
-    repo: &Path,
-    rev: &str,
-    path: &str,
-    ignore_revs: &[String],
-) -> Result<Blame, GitError> {
+pub fn read(repo: &Path, rev: &str, path: &str, ignore_revs: &[String]) -> Result<Blame, GitError> {
     let object = format!("{rev}:{path}");
 
     let size = object_size(repo, &object)?;
@@ -352,7 +347,10 @@ mod tests {
         assert!(got.ignored.is_empty());
 
         // 与 git 自己那份对一遍：逐行 sha 相同
-        let raw = git_in(repo_path, &["blame", "--porcelain", "-L", "1,2", "HEAD", "--", "a.txt"]);
+        let raw = git_in(
+            repo_path,
+            &["blame", "--porcelain", "-L", "1,2", "HEAD", "--", "a.txt"],
+        );
         let shas = porcelain_shas(&raw);
         assert_eq!(
             got.lines.iter().map(|l| l.sha.clone()).collect::<Vec<_>>(),
@@ -390,7 +388,9 @@ mod tests {
             vec!["改了", "改了", "改了"]
         );
         assert!(
-            got.lines[1..].iter().all(|line| line.sha == got.lines[1].sha),
+            got.lines[1..]
+                .iter()
+                .all(|line| line.sha == got.lines[1].sha),
             "同一次提交改的连续几行 sha 相同"
         );
         assert_eq!(
@@ -419,7 +419,8 @@ mod tests {
         let plain = read(repo_path, "HEAD", "a.txt", &[]).expect("blame");
         assert_eq!(plain.lines[0].sha, style, "不改内容时这一行记在改空白那次");
 
-        let ignored = read(repo_path, "HEAD", "a.txt", std::slice::from_ref(&style)).expect("blame");
+        let ignored =
+            read(repo_path, "HEAD", "a.txt", std::slice::from_ref(&style)).expect("blame");
         assert_eq!(ignored.lines[0].sha, base, "忽略掉那次，归属该退回上一次");
         assert_eq!(ignored.ignored, vec![style]);
     }
@@ -435,8 +436,11 @@ mod tests {
         let style = git_in(repo_path, &["rev-parse", "HEAD"]);
         fs::write(repo_path.join("a.txt"), "one \ntwo\nthree\n").expect("write");
         git_in(repo_path, &["commit", "-qam", "feat: 补第三行"]);
-        fs::write(repo_path.join(".blame-ignore-revs"), format!("# 只是改格式\n{style}\n"))
-            .expect("write");
+        fs::write(
+            repo_path.join(".blame-ignore-revs"),
+            format!("# 只是改格式\n{style}\n"),
+        )
+        .expect("write");
         git_in(repo_path, &["add", "-A"]);
         git_in(repo_path, &["commit", "-q", "-m", "chore: 加忽略清单"]);
 

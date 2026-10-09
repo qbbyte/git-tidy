@@ -14,20 +14,13 @@ pub const NAMESPACE: &str = "refs/git-tidy";
 pub fn create(repo: &Path, head: &str) -> Result<String, GitError> {
     let name = format!("backup-{}", stamp());
     let reference = format!("{NAMESPACE}/{name}");
-    process::run(
-        Some(repo),
-        &["update-ref", &reference, head],
-    )?
-    .expect_success()?;
+    process::run(Some(repo), &["update-ref", &reference, head])?.expect_success()?;
     Ok(reference)
 }
 
 /// 还原 ref 现在指向哪里。取不到返回 None：它可能被 `git gc` 或用户清掉了。
 pub fn target(repo: &Path, reference: &str) -> Result<Option<String>, GitError> {
-    let out = process::run(
-        Some(repo),
-        &["rev-parse", "-q", "--verify", reference],
-    )?;
+    let out = process::run(Some(repo), &["rev-parse", "-q", "--verify", reference])?;
     if !out.success {
         return Ok(None);
     }
@@ -38,11 +31,7 @@ pub fn target(repo: &Path, reference: &str) -> Result<Option<String>, GitError> 
 /// 删掉一个还原 ref。撤销成功之后顺手清掉，否则 `refs/git-tidy/` 会越积越多
 /// （它们不在任何分支里，但 reflog 与对象一样要占地方）。
 pub fn drop(repo: &Path, reference: &str) -> Result<(), GitError> {
-    process::run(
-        Some(repo),
-        &["update-ref", "-d", reference],
-    )?
-    .expect_success()?;
+    process::run(Some(repo), &["update-ref", "-d", reference])?.expect_success()?;
     Ok(())
 }
 
@@ -146,12 +135,18 @@ mod tests {
 
         let reference = create(dir.path(), &head).expect("写还原点");
         assert!(reference.starts_with("refs/git-tidy/backup-"));
-        assert_eq!(target(dir.path(), &reference).expect("target").as_deref(), Some(head.as_str()));
+        assert_eq!(
+            target(dir.path(), &reference).expect("target").as_deref(),
+            Some(head.as_str())
+        );
 
         // 它不该出现在分支列表里，也不该被 push 带走
-        let branches = process::run(Some(dir.path()), &["for-each-ref", "--format=%(refname)", "refs/heads"])
-            .expect("refs")
-            .stdout;
+        let branches = process::run(
+            Some(dir.path()),
+            &["for-each-ref", "--format=%(refname)", "refs/heads"],
+        )
+        .expect("refs")
+        .stdout;
         assert_eq!(branches.trim(), "refs/heads/main");
     }
 

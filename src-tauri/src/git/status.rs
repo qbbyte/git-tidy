@@ -134,11 +134,8 @@ fn with_rename_source(repo: &Path, paths: &[String]) -> Vec<String> {
 ///
 /// 形如 `path: eol: crlf` / `path: -text`。没有输出行就是没有这条规则。
 pub fn eol_rule(repo: &Path, path: &str) -> Result<Option<String>, GitError> {
-    let out = process::run(
-        Some(repo),
-        &["check-attr", "eol", "text", "--", path],
-    )?
-    .expect_success()?;
+    let out =
+        process::run(Some(repo), &["check-attr", "eol", "text", "--", path])?.expect_success()?;
     let line = out.trim();
     if line.is_empty() {
         return Ok(None);
@@ -388,10 +385,7 @@ fn apply_patch(repo: &Path, patch: &str) -> Result<Vec<WorkingFile>, GitError> {
         }
     }
 
-    let applied = process::run(
-        Some(repo),
-        &["apply", "--cached", "--recount", &file],
-    );
+    let applied = process::run(Some(repo), &["apply", "--cached", "--recount", &file]);
     let _ = std::fs::remove_file(&file);
     applied?.expect_success()?;
     list(repo)
@@ -701,7 +695,10 @@ mod tests {
             "解除重命名不该留下半场暂存：{:?}",
             files
                 .iter()
-                .map(|file| format!("{}{} {}", file.index_status, file.worktree_status, file.path))
+                .map(|file| format!(
+                    "{}{} {}",
+                    file.index_status, file.worktree_status, file.path
+                ))
                 .collect::<Vec<_>>()
         );
         // 旧文件回到"已跟踪、工作区里没了"，新文件回到未跟踪
@@ -738,8 +735,15 @@ mod tests {
         let hunks = split_hunks(&diff);
         assert_eq!(hunks.len(), 3, "这个 fixture 应该有三段：{diff}");
 
-        let after = stage_hunks(dir, "a.txt", &[HunkSelection { hunk: 1, lines: Vec::new() }])
-            .expect("暂存中间那段");
+        let after = stage_hunks(
+            dir,
+            "a.txt",
+            &[HunkSelection {
+                hunk: 1,
+                lines: Vec::new(),
+            }],
+        )
+        .expect("暂存中间那段");
         let entry = find(&after, "a.txt");
         assert!(entry.staged, "选中的一段要进索引");
 
@@ -755,7 +759,10 @@ mod tests {
         let rest = process::run(Some(dir), &["diff", "--unified=0"]).expect("worktree");
         assert!(rest.stdout.contains("改过的第2行"));
         assert!(rest.stdout.contains("改过的第20行"));
-        assert!(!rest.stdout.contains("改过的第11行"), "已暂存的那处不该还在工作区差异里");
+        assert!(
+            !rest.stdout.contains("改过的第11行"),
+            "已暂存的那处不该还在工作区差异里"
+        );
     }
 
     /// 行级：一段里只选一行，暂存区里就该只有那一行的改动
@@ -789,13 +796,19 @@ mod tests {
         .expect("只暂存这一处改动");
         assert!(find(&after, "a.txt").staged);
 
-        let staged = process::run(Some(dir), &["diff", "--cached"]).expect("cached").stdout;
+        let staged = process::run(Some(dir), &["diff", "--cached"])
+            .expect("cached")
+            .stdout;
         assert!(staged.contains("-one"), "{staged}");
         assert!(staged.contains("+ONE"), "{staged}");
         // 上下文行会被原样带上（`git apply` 靠它定位），但它们不算改动：
         // 暂存完之后，工作区与索引之间不该再剩下任何差异
         assert!(
-            process::run(Some(dir), &["diff"]).expect("worktree").stdout.trim().is_empty(),
+            process::run(Some(dir), &["diff"])
+                .expect("worktree")
+                .stdout
+                .trim()
+                .is_empty(),
             "选中这一处之后不该还有未暂存的改动"
         );
     }
@@ -808,16 +821,27 @@ mod tests {
         fs::write(dir.join("a.txt"), "1\n").expect("write");
         stage_and_commit(dir, "chore: 铺底");
 
-        let before = process::run(Some(dir), &["diff", "--cached"]).expect("cached").stdout;
+        let before = process::run(Some(dir), &["diff", "--cached"])
+            .expect("cached")
+            .stdout;
         // 指一段不存在的位置：整块必须被拒
-        let err = stage_hunks(dir, "a.txt", &[HunkSelection { hunk: 7, lines: Vec::new() }])
-            .expect_err("不存在的段不该被接受");
+        let err = stage_hunks(
+            dir,
+            "a.txt",
+            &[HunkSelection {
+                hunk: 7,
+                lines: Vec::new(),
+            }],
+        )
+        .expect_err("不存在的段不该被接受");
         assert!(
             matches!(err, GitError::PatchApplyFailed { .. }),
             "要报 PatchApplyFailed：{err:?}"
         );
         assert_eq!(
-            process::run(Some(dir), &["diff", "--cached"]).expect("cached").stdout,
+            process::run(Some(dir), &["diff", "--cached"])
+                .expect("cached")
+                .stdout,
             before,
             "预验不过时索引不能变"
         );
@@ -830,8 +854,15 @@ mod tests {
         fs::write(dir.join("a.txt"), "1\n").expect("write");
         stage_and_commit(dir, "chore: 铺底");
 
-        let err = stage_hunks(dir, "a.txt", &[HunkSelection { hunk: 0, lines: Vec::new() }])
-            .expect_err("没有未暂存改动时不该接受分段暂存");
+        let err = stage_hunks(
+            dir,
+            "a.txt",
+            &[HunkSelection {
+                hunk: 0,
+                lines: Vec::new(),
+            }],
+        )
+        .expect_err("没有未暂存改动时不该接受分段暂存");
         assert!(format!("{err:?}").contains("未暂存"), "{err:?}");
     }
 
@@ -907,6 +938,10 @@ mod tests {
 
         let files = stage(repo.path(), &["-F".to_string()]).expect("stage");
         let entry = find(&files, "-F");
-        assert!(entry.staged, "`-F` 该被当成文件名暂存，实际：{:?}", paths_of(&files));
+        assert!(
+            entry.staged,
+            "`-F` 该被当成文件名暂存，实际：{:?}",
+            paths_of(&files)
+        );
     }
 }

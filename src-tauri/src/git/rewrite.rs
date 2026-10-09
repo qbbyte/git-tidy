@@ -74,7 +74,11 @@ impl TodoItem {
     /// 只给测试用：线上 todo 从界面反序列化而来，不走这个构造器。
     #[cfg(test)]
     pub fn pick(sha: &str) -> TodoItem {
-        TodoItem { sha: sha.to_string(), action: Action::Pick, message: None }
+        TodoItem {
+            sha: sha.to_string(),
+            action: Action::Pick,
+            message: None,
+        }
     }
 }
 
@@ -173,7 +177,12 @@ pub fn run(
             // 清掉冲突态再退：临时分支还指着停住的那一步，仓库本身已经能改写前的样子收场
             let _ = process::run(Some(path), &["cherry-pick", "--abort"]);
             let stopped_at = group.first().map(|item| item.sha.clone());
-            return Err(annotate(err, stopped_at.as_deref(), &subjects, &temp_branch));
+            return Err(annotate(
+                err,
+                stopped_at.as_deref(),
+                &subjects,
+                &temp_branch,
+            ));
         }
         steps.push(StepReport {
             sha: group.first().expect("split 不产出空组").sha.clone(),
@@ -204,7 +213,12 @@ pub fn promote(
 ) -> Result<(), GitError> {
     process::run(
         Some(path),
-        &["update-ref", &format!("refs/heads/{branch}"), new_head, old_head],
+        &[
+            "update-ref",
+            &format!("refs/heads/{branch}"),
+            new_head,
+            old_head,
+        ],
     )?
     .expect_success()?;
     // 先挪指针再切过去：顺序反了会 checkout 到一个尚未指向新提交的分支上
@@ -264,7 +278,11 @@ impl<'a> Group<'a> {
             if item.action.merges_into_previous() {
                 let Some(last) = groups.last_mut() else {
                     return Err(GitError::ParseFailure {
-                        snippet: format!("{} 是 {}，但前面没有可并进的提交", short(&item.sha), item.action.label()),
+                        snippet: format!(
+                            "{} 是 {}，但前面没有可并进的提交",
+                            short(&item.sha),
+                            item.action.label()
+                        ),
                     });
                 };
                 last.items.push(item);
@@ -291,15 +309,23 @@ fn apply_group(
         // 用户看到的历史长度和界面里的 todo 对不上
         process::run(
             Some(path),
-            &["cherry-pick", "--allow-empty", "--keep-redundant-commits", &item.sha],
+            &[
+                "cherry-pick",
+                "--allow-empty",
+                "--keep-redundant-commits",
+                &item.sha,
+            ],
         )?
         .expect_success()?;
     }
 
     if squashing {
         // 连着 pick 完再 soft reset 回本组第一条之前，把它们融成一条
-        process::run(Some(path), &["reset", "--soft", "-q", &format!("{}^1", leader.sha)])?
-            .expect_success()?;
+        process::run(
+            Some(path),
+            &["reset", "--soft", "-q", &format!("{}^1", leader.sha)],
+        )?
+        .expect_success()?;
         let message = compose_message(path, items)?;
         let author = format!(
             "{} <{}>",
@@ -309,7 +335,9 @@ fn apply_group(
         let date = format_field(path, &leader.sha, "%aI")?;
         process::run(
             Some(path),
-            &["commit", "-q", "--author", &author, "--date", &date, "-m", &message],
+            &[
+                "commit", "-q", "--author", &author, "--date", &date, "-m", &message,
+            ],
         )?
         .expect_success()?;
     } else if leader.action == Action::Reword {
@@ -339,10 +367,13 @@ fn compose_message(path: &Path, items: &[&TodoItem]) -> Result<String, GitError>
 }
 
 fn format_field(path: &Path, sha: &str, format: &str) -> Result<String, GitError> {
-    Ok(process::run(Some(path), &["log", "-1", &format!("--format={format}"), sha])?
-        .expect_success()?
-        .trim()
-        .to_string())
+    Ok(process::run(
+        Some(path),
+        &["log", "-1", &format!("--format={format}"), sha],
+    )?
+    .expect_success()?
+    .trim()
+    .to_string())
 }
 
 fn rev_parse(path: &Path, rev: &str) -> Result<String, GitError> {
@@ -375,8 +406,12 @@ fn annotate(
     };
     let tail = format!("改写停在 {at}；临时分支 {temp_branch} 已保留，可进去查看现场");
     match err {
-        GitError::GitFailed { stderr } => GitError::GitFailed { stderr: format!("{tail}：{stderr}") },
-        GitError::PatchApplyFailed { detail } => GitError::PatchApplyFailed { detail: format!("{tail}：{detail}") },
+        GitError::GitFailed { stderr } => GitError::GitFailed {
+            stderr: format!("{tail}：{stderr}"),
+        },
+        GitError::PatchApplyFailed { detail } => GitError::PatchApplyFailed {
+            detail: format!("{tail}：{detail}"),
+        },
         other => other,
     }
 }
@@ -411,7 +446,10 @@ mod tests {
         for (name, text) in [("a.txt", "1\n"), ("b.txt", "2\n"), ("c.txt", "3\n")] {
             std::fs::write(dir.path().join(name), text).expect("write");
             git_in(dir.path(), &["add", "-A"]);
-            git_in(dir.path(), &["commit", "-q", "-m", &format!("feat: {name}")]);
+            git_in(
+                dir.path(),
+                &["commit", "-q", "-m", &format!("feat: {name}")],
+            );
         }
         let base = rev_parse(dir.path(), "HEAD~3").expect("base");
         (dir, base)
@@ -447,25 +485,39 @@ mod tests {
 
         let todo = vec![
             TodoItem::pick(&entries[0].sha),
-            TodoItem { sha: entries[1].sha.clone(), action: Action::Squash, message: None },
+            TodoItem {
+                sha: entries[1].sha.clone(),
+                action: Action::Squash,
+                message: None,
+            },
             TodoItem::pick(&entries[2].sha),
         ];
         let report = run(dir.path(), &base, &head, &todo, &mut |_| {}).expect("改写");
 
-        assert_eq!(tree_before, tree_of(dir.path(), &report.new_head), "压缩不得改变最终 tree");
+        assert_eq!(
+            tree_before,
+            tree_of(dir.path(), &report.new_head),
+            "压缩不得改变最终 tree"
+        );
 
-        let count = process::run(Some(dir.path()), &["rev-list", "--count", &format!("{base}..HEAD")])
-            .expect("count")
-            .stdout
-            .trim()
-            .to_string();
+        let count = process::run(
+            Some(dir.path()),
+            &["rev-list", "--count", &format!("{base}..HEAD")],
+        )
+        .expect("count")
+        .stdout
+        .trim()
+        .to_string();
         assert_eq!(count, "2", "两条压成一条后区间里应该剩两条提交");
 
         // 压缩后的那条提交是 HEAD~1（后面还 pick 了第三条）
         let message = process::run(Some(dir.path()), &["log", "-1", "--format=%B", "HEAD~1"])
             .expect("message")
             .stdout;
-        assert!(message.contains("feat: a.txt") && message.contains("feat: b.txt"), "{message}");
+        assert!(
+            message.contains("feat: a.txt") && message.contains("feat: b.txt"),
+            "{message}"
+        );
 
         let author = process::run(
             Some(dir.path()),
@@ -485,11 +537,14 @@ mod tests {
         let todo: Vec<TodoItem> = entries.iter().map(|e| TodoItem::pick(&e.sha)).collect();
         run(dir.path(), &base, &head, &todo, &mut |_| {}).expect("改写");
 
-        let count = process::run(Some(dir.path()), &["rev-list", "--count", &format!("{base}..HEAD")])
-            .expect("count")
-            .stdout
-            .trim()
-            .to_string();
+        let count = process::run(
+            Some(dir.path()),
+            &["rev-list", "--count", &format!("{base}..HEAD")],
+        )
+        .expect("count")
+        .stdout
+        .trim()
+        .to_string();
         assert_eq!(count, "3", "三条普通 pick 之后仍该是三条提交");
     }
 
@@ -501,7 +556,11 @@ mod tests {
 
         let todo = vec![
             TodoItem::pick(&entries[0].sha),
-            TodoItem { sha: entries[1].sha.clone(), action: Action::Fixup, message: None },
+            TodoItem {
+                sha: entries[1].sha.clone(),
+                action: Action::Fixup,
+                message: None,
+            },
         ];
         run(dir.path(), &base, &head, &todo, &mut |_| {}).expect("改写");
 
@@ -509,7 +568,10 @@ mod tests {
             .expect("message")
             .stdout;
         assert!(message.contains("feat: a.txt"), "{message}");
-        assert!(!message.contains("feat: b.txt"), "fixup 的信息不该出现：{message}");
+        assert!(
+            !message.contains("feat: b.txt"),
+            "fixup 的信息不该出现：{message}"
+        );
     }
 
     #[test]
@@ -529,9 +591,12 @@ mod tests {
         };
         let report = run(dir.path(), &base, &head, &todo, &mut |_| {}).expect("改写");
 
-        let message = process::run(Some(dir.path()), &["log", "-1", "--format=%B", &report.new_head])
-            .expect("message")
-            .stdout;
+        let message = process::run(
+            Some(dir.path()),
+            &["log", "-1", "--format=%B", &report.new_head],
+        )
+        .expect("message")
+        .stdout;
         assert!(message.contains("feat(spec): 改过的标题"), "{message}");
         assert!(message.contains("正文"), "{message}");
         assert_eq!(tree_before, tree_of(dir.path(), &report.new_head));
@@ -574,10 +639,23 @@ mod tests {
         let (dir, base) = three_commits();
         let head = head_of(dir.path());
         let entries = plan(dir.path(), &base, &head).expect("plan");
-        let report = run(dir.path(), &base, &head, &[TodoItem::pick(&entries[2].sha)], &mut |_| {})
-            .expect("改写");
+        let report = run(
+            dir.path(),
+            &base,
+            &head,
+            &[TodoItem::pick(&entries[2].sha)],
+            &mut |_| {},
+        )
+        .expect("改写");
 
-        promote(dir.path(), "main", &head, &report.new_head, &report.temp_branch).expect("切换");
+        promote(
+            dir.path(),
+            "main",
+            &head,
+            &report.new_head,
+            &report.temp_branch,
+        )
+        .expect("切换");
 
         assert_eq!(head_of(dir.path()), report.new_head);
         assert_eq!(
@@ -588,8 +666,13 @@ mod tests {
             "main",
             "要切回原分支，不能留在临时分支上"
         );
-        let branches = process::run(Some(dir.path()), &["branch", "--list"]).expect("branch").stdout;
-        assert!(!branches.contains(TEMP_PREFIX), "成功之后临时分支要清掉：{branches}");
+        let branches = process::run(Some(dir.path()), &["branch", "--list"])
+            .expect("branch")
+            .stdout;
+        assert!(
+            !branches.contains(TEMP_PREFIX),
+            "成功之后临时分支要清掉：{branches}"
+        );
     }
 
     #[test]
@@ -623,8 +706,13 @@ mod tests {
         let text = format!("{err:?}");
         assert!(text.contains("改写停在"), "错误要说明停在哪个提交：{text}");
         assert!(text.contains(TEMP_PREFIX), "错误要给出临时分支名：{text}");
-        let branches = process::run(Some(dir.path()), &["branch", "--list"]).expect("branch").stdout;
-        assert!(branches.contains(TEMP_PREFIX), "临时分支要留下来供诊断：{branches}");
+        let branches = process::run(Some(dir.path()), &["branch", "--list"])
+            .expect("branch")
+            .stdout;
+        assert!(
+            branches.contains(TEMP_PREFIX),
+            "临时分支要留下来供诊断：{branches}"
+        );
     }
 
     #[test]
@@ -642,7 +730,11 @@ mod tests {
     fn reword_after_a_plain_pick_is_its_own_group() {
         let todo = vec![
             TodoItem::pick(&"a".repeat(40)),
-            TodoItem { sha: "b".repeat(40), action: Action::Reword, message: Some("x".into()) },
+            TodoItem {
+                sha: "b".repeat(40),
+                action: Action::Reword,
+                message: Some("x".into()),
+            },
         ];
         assert!(
             validate(&todo).is_ok(),
@@ -653,17 +745,33 @@ mod tests {
     #[test]
     fn reword_at_the_head_of_a_group_may_be_followed_by_squash() {
         let todo = vec![
-            TodoItem { sha: "a".repeat(40), action: Action::Reword, message: Some("x".into()) },
-            TodoItem { sha: "b".repeat(40), action: Action::Squash, message: None },
+            TodoItem {
+                sha: "a".repeat(40),
+                action: Action::Reword,
+                message: Some("x".into()),
+            },
+            TodoItem {
+                sha: "b".repeat(40),
+                action: Action::Squash,
+                message: None,
+            },
         ];
-        assert!(validate(&todo).is_ok(), "reword 起头再 squash 是 git 自己的写法");
+        assert!(
+            validate(&todo).is_ok(),
+            "reword 起头再 squash 是 git 自己的写法"
+        );
     }
 
     #[test]
     fn empty_todo_and_a_leading_squash_are_both_refused() {
         assert!(validate(&[]).is_err(), "空 todo 要挡住");
         assert!(
-            validate(&[TodoItem { sha: "a".repeat(40), action: Action::Squash, message: None }]).is_err(),
+            validate(&[TodoItem {
+                sha: "a".repeat(40),
+                action: Action::Squash,
+                message: None
+            }])
+            .is_err(),
             "打头的 squash 没有可并对象"
         );
     }

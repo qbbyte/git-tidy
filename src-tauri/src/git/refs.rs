@@ -89,7 +89,13 @@ pub fn list(repo: &Path) -> Result<Vec<Ref>, GitError> {
     let format = format!("--format={}", REF_ATOMS.join(ATOM_SEP));
     let stdout = process::run(
         Some(repo),
-        &["for-each-ref", &format, "refs/heads", "refs/remotes", "refs/tags"],
+        &[
+            "for-each-ref",
+            &format,
+            "refs/heads",
+            "refs/remotes",
+            "refs/tags",
+        ],
     )?
     .expect_success()?;
 
@@ -326,9 +332,10 @@ pub struct RepoState {
 pub fn state(repo: &Path, refs: &[Ref]) -> Result<RepoState, GitError> {
     let branch = current_branch(repo)?;
     let info = interrupt(repo)?;
-    let row = branch
-        .as_deref()
-        .and_then(|name| refs.iter().find(|row| row.kind == RefKind::Branch && row.name == name));
+    let row = branch.as_deref().and_then(|name| {
+        refs.iter()
+            .find(|row| row.kind == RefKind::Branch && row.name == name)
+    });
 
     Ok(RepoState {
         branch,
@@ -432,7 +439,10 @@ mod tests {
         let dir = repo();
         let head = commit(dir.path(), "a.txt", "feat: 基线");
         git_in(dir.path(), &["branch", "side"]);
-        git_in(dir.path(), &["update-ref", "refs/remotes/origin/main", &head]);
+        git_in(
+            dir.path(),
+            &["update-ref", "refs/remotes/origin/main", &head],
+        );
         git_in(dir.path(), &["tag", "lw-tag"]);
         git_in(dir.path(), &["tag", "-a", "ann-tag", "-m", "发布说明"]);
 
@@ -480,7 +490,10 @@ mod tests {
         // 刚推完：已同步，没有数字，但跟踪分支是存在的
         let refs = list(dir.path()).expect("读引用");
         let main = find(&refs, "main");
-        assert_eq!((main.ahead, main.behind, main.upstream_gone), (None, None, false));
+        assert_eq!(
+            (main.ahead, main.behind, main.upstream_gone),
+            (None, None, false)
+        );
         assert!(main.upstream.is_some(), "已同步也要报出跟踪分支名");
 
         commit(dir.path(), "b.txt", "feat: 只有本地多");
@@ -492,10 +505,7 @@ mod tests {
         );
 
         // 远程分支被删：跟踪分支还在配置里，但对象没了
-        git_in(
-            remote.path(),
-            &["update-ref", "-d", "refs/heads/main"],
-        );
+        git_in(remote.path(), &["update-ref", "-d", "refs/heads/main"]);
         git_in(dir.path(), &["fetch", "-q", "--prune", "origin"]);
         let refs = list(dir.path()).expect("读引用");
         let main = find(&refs, "main");
@@ -512,7 +522,10 @@ mod tests {
         let refs = list(dir.path()).expect("读引用");
         let row = find(&refs, "no-up");
         assert!(row.upstream.is_none());
-        assert_eq!((row.ahead, row.behind, row.upstream_gone), (None, None, false));
+        assert_eq!(
+            (row.ahead, row.behind, row.upstream_gone),
+            (None, None, false)
+        );
     }
 
     #[test]
@@ -575,7 +588,11 @@ mod tests {
         assert!(!rebase.success, "这次变基必须中断");
 
         let info = interrupt(dir.path()).expect("读中断态");
-        assert_eq!(info.kind, Interrupt::Rebase, "变基目录和 CHERRY_PICK_HEAD 同时存在时报变基");
+        assert_eq!(
+            info.kind,
+            Interrupt::Rebase,
+            "变基目录和 CHERRY_PICK_HEAD 同时存在时报变基"
+        );
         assert_eq!(
             info.branch.as_deref(),
             Some("side"),
@@ -624,7 +641,11 @@ mod tests {
         );
 
         let merged = process::run(Some(&target), &["merge", "main"]).expect("merge");
-        assert!(!merged.success, "工作区里的这次合并必须冲突：{}", merged.stdout);
+        assert!(
+            !merged.success,
+            "工作区里的这次合并必须冲突：{}",
+            merged.stdout
+        );
 
         assert_eq!(
             interrupt(&target).expect("工作区中断态").kind,
@@ -640,7 +661,10 @@ mod tests {
     fn a_clean_repo_reports_no_interrupt() {
         let dir = repo();
         commit(dir.path(), "a.txt", "feat: 基线");
-        assert_eq!(interrupt(dir.path()).expect("读中断态").kind, Interrupt::None);
+        assert_eq!(
+            interrupt(dir.path()).expect("读中断态").kind,
+            Interrupt::None
+        );
     }
 
     /// 两条分支在同一行上各写各的，后面的 merge / rebase / cherry-pick 必然冲突

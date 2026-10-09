@@ -161,11 +161,7 @@ pub fn read(
 ///
 /// 与 `read` 走同一个解析器与同一个降级阀值，只是对比对象从"提交对父"换成"索引对工作区"。
 /// 逐行暂存的界面就靠它：没有这一份就看不见可分段的内容。
-pub fn read_worktree(
-    repo: &Path,
-    path: &str,
-    ignore_white_space: bool,
-) -> Result<Diff, GitError> {
+pub fn read_worktree(repo: &Path, path: &str, ignore_white_space: bool) -> Result<Diff, GitError> {
     let mut args: Vec<String> = vec![
         "diff".to_string(),
         "--no-color".to_string(),
@@ -202,7 +198,8 @@ fn assemble(repo: &Path, path: &str, stdout: &[u8]) -> Result<Diff, GitError> {
     };
 
     // 阈值闸在解析之后：统计还得给，那正是降级之后唯一能显示的东西
-    if diff.render == Render::Text && (diff.line_count > MAX_DIFF_LINES || byte_count > MAX_DIFF_BYTES)
+    if diff.render == Render::Text
+        && (diff.line_count > MAX_DIFF_LINES || byte_count > MAX_DIFF_BYTES)
     {
         diff.render = Render::TooLarge;
         diff.hunks = Vec::new();
@@ -296,8 +293,12 @@ fn upgrade_to_images(
         return None;
     }
     // 拿到的字节必须真是这个格式；有一侧不是就是伪装
-    if old.as_ref().is_some_and(|raw| !matches_magic(mime, raw.as_slice()))
-        || new.as_ref().is_some_and(|raw| !matches_magic(mime, raw.as_slice()))
+    if old
+        .as_ref()
+        .is_some_and(|raw| !matches_magic(mime, raw.as_slice()))
+        || new
+            .as_ref()
+            .is_some_and(|raw| !matches_magic(mime, raw.as_slice()))
     {
         return None;
     }
@@ -525,9 +526,11 @@ fn push_hunk(hunks: &mut Vec<Hunk>, current: &mut Option<Hunk>) {
 /// 的一部分带出去（段落名那一栏就多个 @@ 在前面，而函数名里真能出现 `@@`，C++ 的
 /// `Class@@method` 那种）。找不到收尾的 `@@` 就是形态不认识，报错。
 fn hunk_header(raw: &str) -> Result<Hunk, GitError> {
-    let after = raw.strip_prefix("@@").ok_or_else(|| GitError::ParseFailure {
-        snippet: format!("hunk 头不以 @@ 开头：{raw}"),
-    })?;
+    let after = raw
+        .strip_prefix("@@")
+        .ok_or_else(|| GitError::ParseFailure {
+            snippet: format!("hunk 头不以 @@ 开头：{raw}"),
+        })?;
     let Some(closing) = after.find("@@") else {
         return Err(GitError::ParseFailure {
             snippet: format!("hunk 头没有收尾的 @@：{raw}"),
@@ -567,11 +570,9 @@ fn range(raw: &str, sign: char) -> Result<(usize, usize), GitError> {
             snippet: format!("hunk 起点不是数字：{raw}"),
         })?;
     let count = match parts.next() {
-        Some(value) => value
-            .parse::<usize>()
-            .map_err(|_| GitError::ParseFailure {
-                snippet: format!("hunk 长度不是数字：{raw}"),
-            })?,
+        Some(value) => value.parse::<usize>().map_err(|_| GitError::ParseFailure {
+            snippet: format!("hunk 长度不是数字：{raw}"),
+        })?,
         // 省略写法就是 1
         None => 1,
     };
@@ -649,8 +650,11 @@ mod tests {
         )
         .expect("write");
         commit(dir.path(), "chore: 铺底");
-        fs::write(dir.path().join("a.txt"), "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\n")
-            .expect("write");
+        fs::write(
+            dir.path().join("a.txt"),
+            "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\n",
+        )
+        .expect("write");
         let sha = commit(dir.path(), "fix: 改第二行");
 
         let diff = read(dir.path(), &sha, "a.txt", None, false).expect("diff");
@@ -749,7 +753,11 @@ mod tests {
         assert_eq!(plain.hunks.len(), 1);
 
         let ignored = read(dir.path(), &sha, "ws.txt", None, true).expect("diff");
-        assert_eq!(ignored.render, Render::Empty, "忽略空白后不该再有 hunk：{ignored:?}");
+        assert_eq!(
+            ignored.render,
+            Render::Empty,
+            "忽略空白后不该再有 hunk：{ignored:?}"
+        );
         assert!(ignored.hunks.is_empty());
     }
 
@@ -764,7 +772,11 @@ mod tests {
 
         let diff = read(dir.path(), &sha, "new.txt", Some("old.txt"), false).expect("diff");
         assert_eq!(diff.render, Render::Text, "改名要配成一段：{diff:?}");
-        assert_eq!((diff.added, diff.deleted), (1, 1), "两段各一半就不对了：{diff:?}");
+        assert_eq!(
+            (diff.added, diff.deleted),
+            (1, 1),
+            "两段各一半就不对了：{diff:?}"
+        );
         assert_eq!(diff.hunks.len(), 1);
     }
 
@@ -772,7 +784,9 @@ mod tests {
     #[test]
     fn a_png_pair_comes_back_as_base64() {
         let dir = repo();
-        let header: Vec<u8> = vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 1, 2, 3];
+        let header: Vec<u8> = vec![
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 1, 2, 3,
+        ];
         fs::write(dir.path().join("p.png"), &header).expect("write");
         commit(dir.path(), "chore: 一张假 png");
         let mut bigger = header.clone();
@@ -781,7 +795,11 @@ mod tests {
         let sha = commit(dir.path(), "fix: 换一张");
 
         let diff = read(dir.path(), &sha, "p.png", None, false).expect("diff");
-        assert_eq!(diff.render, Render::Image, "内容头是 PNG 就该升成图片：{diff:?}");
+        assert_eq!(
+            diff.render,
+            Render::Image,
+            "内容头是 PNG 就该升成图片：{diff:?}"
+        );
         let images = diff.images.as_ref().expect("两个 blob");
         assert_eq!(images.new.as_ref().expect("新侧").bytes, 13);
         assert_eq!(images.old.as_ref().expect("旧侧").base64, base64(&header));
@@ -794,13 +812,21 @@ mod tests {
     #[test]
     fn a_fake_png_stays_binary() {
         let dir = repo();
-        fs::write(dir.path().join("fake.png"), [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9]).expect("write");
+        fs::write(
+            dir.path().join("fake.png"),
+            [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        )
+        .expect("write");
         commit(dir.path(), "chore: 一个假冒的 png");
         fs::write(dir.path().join("fake.png"), [0u8; 12]).expect("write");
         let sha = commit(dir.path(), "fix: 换一坨");
 
         let diff = read(dir.path(), &sha, "fake.png", None, false).expect("diff");
-        assert_eq!(diff.render, Render::Binary, "内容头不对就不该升成图片：{diff:?}");
+        assert_eq!(
+            diff.render,
+            Render::Binary,
+            "内容头不对就不该升成图片：{diff:?}"
+        );
         assert!(diff.images.is_none());
         assert_eq!(diff.old_size, Some(10), "退回二进制也得给大小差");
         assert_eq!(diff.new_size, Some(12));
@@ -872,7 +898,10 @@ mod tests {
 
         let err = hunk_header("@@ 坏了 @@").expect_err("区间不是区间要报错");
         assert!(format!("{err:?}").contains("hunk"), "{err:?}");
-        assert!(hunk_header("@@ -1 +1 没有收尾").is_err(), "找不到收尾的 @@ 就报错");
+        assert!(
+            hunk_header("@@ -1 +1 没有收尾").is_err(),
+            "找不到收尾的 @@ 就报错"
+        );
     }
 
     /// 认不出来的 hunk 头要带着原文报错，不能悄悄把行号算错
@@ -891,7 +920,10 @@ mod tests {
         assert!(matches_magic("image/png", b"\x89PNG\r\n\x1a\nxx"));
         assert!(!matches_magic("image/png", b"\x89PN"));
         assert!(matches_magic("image/webp", b"RIFF\x00\x00\x00\x00WEBPVP8 "));
-        assert!(!matches_magic("image/webp", b"RIFF\x00\x00\x00\x00XXXXYYYY"));
+        assert!(!matches_magic(
+            "image/webp",
+            b"RIFF\x00\x00\x00\x00XXXXYYYY"
+        ));
         // 短于 12 字节的 RIFF 头不能算 webp，越界读取不行
         assert!(!matches_magic("image/webp", b"RIFF"));
     }

@@ -7,8 +7,8 @@ use tauri::State;
 use super::commit::MAX_PAGE_SIZE;
 use crate::config::spec::{self, Spec};
 use crate::error::GitError;
-use crate::git::log::{self, Filter};
 use crate::git::graph;
+use crate::git::log::{self, Filter};
 use crate::store::db::{query, Db};
 use crate::store::repos::{self, RepoKind};
 
@@ -134,11 +134,7 @@ fn page_of(
 /// 未筛选时只读父子关系，不碰 subject/body，5 万提交也就几 MB；
 /// 筛选时要判 type 与合规，只能把列表那一层的解析重来一遍——这一遍更贵，
 /// 所以结果进缓存，再翻页不再重算。
-fn visible_walk(
-    path: &Path,
-    filter: &Filter,
-    spec: &Spec,
-) -> Result<Vec<graph::Node>, GitError> {
+fn visible_walk(path: &Path, filter: &Filter, spec: &Spec) -> Result<Vec<graph::Node>, GitError> {
     if filter.is_empty() {
         return graph::history(path);
     }
@@ -172,7 +168,10 @@ mod tests {
         // 会返回借自一个闭包局部 Arc 的引用，编译不过
         let reused = cache.reuse(1, "old|").expect("键没变就该复用");
         assert_eq!(
-            reused.iter().map(|row| row.sha.as_str()).collect::<Vec<_>>(),
+            reused
+                .iter()
+                .map(|row| row.sha.as_str())
+                .collect::<Vec<_>>(),
             vec!["old", "a"]
         );
         assert!(cache.reuse(1, "new|").is_none(), "HEAD 变了必须重算");
@@ -208,11 +207,19 @@ mod tests {
 
         assert_eq!(cache.reuse(1, "x|x").map(|rows| rows.len()), Some(1));
         assert_eq!(cache.reuse(2, "y|x").map(|rows| rows.len()), Some(2));
-        assert_eq!(cache.reuse(1, "y|x").map(|rows| rows.len()), None, "另一个仓库的键不算");
+        assert_eq!(
+            cache.reuse(1, "y|x").map(|rows| rows.len()),
+            None,
+            "另一个仓库的键不算"
+        );
 
         cache.invalidate(1);
         assert_eq!(cache.reuse(1, "x|x").map(|rows| rows.len()), None);
-        assert_eq!(cache.reuse(2, "y|x").map(|rows| rows.len()), Some(2), "别的一直在");
+        assert_eq!(
+            cache.reuse(2, "y|x").map(|rows| rows.len()),
+            Some(2),
+            "别的一直在"
+        );
     }
 
     /// 反复切筛选时不重算；超过保留份数才挤掉最老的那份
@@ -237,10 +244,20 @@ mod tests {
         let all = rows(&["e", "d", "c", "b", "a"]);
         let page = graph::page(&all, 1, 2);
         assert_eq!(
-            page.rows.iter().map(|row| row.sha.as_str()).collect::<Vec<_>>(),
+            page.rows
+                .iter()
+                .map(|row| row.sha.as_str())
+                .collect::<Vec<_>>(),
             vec!["d", "c"]
         );
-        assert_eq!(graph::page(&all, 0, 5).rows.len(), 5, "limit 大于剩余就给剩余");
-        assert!(graph::page(&all, 5, 5).rows.is_empty(), "skip 落在末尾之后是空页");
+        assert_eq!(
+            graph::page(&all, 0, 5).rows.len(),
+            5,
+            "limit 大于剩余就给剩余"
+        );
+        assert!(
+            graph::page(&all, 5, 5).rows.is_empty(),
+            "skip 落在末尾之后是空页"
+        );
     }
 }

@@ -54,8 +54,8 @@ pub fn deletable(repo: &Path, name: &str, base: &str) -> Result<Deletable, GitEr
     }
     let range = name.to_string();
     let exclude = format!("^{}", merge_base.stdout.trim());
-    let stdout = process::run(Some(repo), &["rev-list", "--count", &range, &exclude])?
-        .expect_success()?;
+    let stdout =
+        process::run(Some(repo), &["rev-list", "--count", &range, &exclude])?.expect_success()?;
     let unmerged: usize = stdout.trim().parse().map_err(|_| GitError::ParseFailure {
         snippet: process::snippet(&stdout),
     })?;
@@ -97,8 +97,7 @@ pub fn set_upstream(repo: &Path, branch: &str, upstream: Option<&str>) -> Result
             .expect_success()?;
         }
         None => {
-            process::run(Some(repo), &["branch", "--unset-upstream", branch])?
-                .expect_success()?;
+            process::run(Some(repo), &["branch", "--unset-upstream", branch])?.expect_success()?;
         }
     }
     Ok(())
@@ -179,10 +178,13 @@ mod tests {
     }
 
     fn branches(dir: &Path) -> Vec<String> {
-        git_in(dir, &["for-each-ref", "--format=%(refname:short)", "refs/heads"])
-            .lines()
-            .map(str::to_string)
-            .collect()
+        git_in(
+            dir,
+            &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        )
+        .lines()
+        .map(str::to_string)
+        .collect()
     }
 
     #[test]
@@ -295,9 +297,12 @@ mod tests {
 
         set_upstream(path, "main", None).expect("清上游");
         assert!(
-            process::run(Some(path), &["rev-parse", "--abbrev-ref", "main@{upstream}"])
-                .map(|out| !out.success)
-                .unwrap_or(false),
+            process::run(
+                Some(path),
+                &["rev-parse", "--abbrev-ref", "main@{upstream}"]
+            )
+            .map(|out| !out.success)
+            .unwrap_or(false),
             "清掉之后不该再有上游"
         );
     }
@@ -312,7 +317,11 @@ mod tests {
 
         let kinds = git_in(
             path,
-            &["for-each-ref", "--format=%(refname:short) %(objecttype)", "refs/tags"],
+            &[
+                "for-each-ref",
+                "--format=%(refname:short) %(objecttype)",
+                "refs/tags",
+            ],
         );
         assert!(kinds.contains("lw commit"), "轻量标签直接指提交：{kinds}");
         assert!(kinds.contains("v1 tag"), "附注标签指标签对象：{kinds}");
@@ -331,16 +340,19 @@ mod tests {
         let dir = repo();
         let path = dir.path();
 
-        for bad in ["", "  ", "-x", "with space", "bad~name", "a..b", "带 控制\t符"] {
-            assert!(
-                create(path, bad, None).is_err(),
-                "分支名该被拒：{bad:?}"
-            );
+        for bad in [
+            "",
+            "  ",
+            "-x",
+            "with space",
+            "bad~name",
+            "a..b",
+            "带 控制\t符",
+        ] {
+            assert!(create(path, bad, None).is_err(), "分支名该被拒：{bad:?}");
         }
         // 与现有分支同名也要拒：那是 git 的约束，我们转述它而不是自己发明规则
         assert!(create(path, "main", None).is_err(), "同名分支不该被建出来");
         assert!(delete_tag(path, "--delete").is_err());
     }
-
-    
 }

@@ -114,11 +114,7 @@ pub fn drop(repo: &Path, reference: &str) -> Result<(), GitError> {
 pub fn branch_from(repo: &Path, reference: &str, name: &str) -> Result<(), GitError> {
     let reference = check_reference(reference)?;
     super::branch::check_name(repo, name, "refs/heads/")?;
-    process::run(
-        Some(repo),
-        &["stash", "branch", name, &reference],
-    )?
-    .expect_success()?;
+    process::run(Some(repo), &["stash", "branch", name, &reference])?.expect_success()?;
     Ok(())
 }
 
@@ -208,7 +204,10 @@ mod tests {
         assert!(entries[0].message.contains("改点东西"), "{:?}", entries[0]);
 
         apply(path, "stash@{0}").expect("apply");
-        assert_eq!(fs::read_to_string(path.join("a.txt")).expect("read"), "改了\n");
+        assert_eq!(
+            fs::read_to_string(path.join("a.txt")).expect("read"),
+            "改了\n"
+        );
         assert_eq!(list(path).expect("list").len(), 1, "apply 不该把条目删掉");
 
         drop(path, "stash@{0}").expect("drop");
@@ -227,13 +226,19 @@ mod tests {
         assert!(!path.join("新文件.txt").exists(), "未跟踪文件也要被收走");
 
         pop(path, "stash@{0}").expect("pop");
-        assert_eq!(fs::read_to_string(path.join("a.txt")).expect("read"), "改了\n");
+        assert_eq!(
+            fs::read_to_string(path.join("a.txt")).expect("read"),
+            "改了\n"
+        );
         assert_eq!(
             fs::read_to_string(path.join("新文件.txt")).expect("read"),
             "新的\n",
             "未跟踪的文件也得回来"
         );
-        assert!(list(path).expect("list").is_empty(), "pop 成功后条目应该没了");
+        assert!(
+            list(path).expect("list").is_empty(),
+            "pop 成功后条目应该没了"
+        );
     }
 
     /// pop 撞冲突时条目必须还在——删了就再也回不去了
@@ -269,17 +274,34 @@ mod tests {
 
         branch_from(path, "stash@{0}", "rescue").expect("从 stash 建分支");
         assert_eq!(must(path, &["rev-parse", "--abbrev-ref", "HEAD"]), "rescue");
-        assert_eq!(fs::read_to_string(path.join("a.txt")).expect("read"), "改点\n");
-        assert!(list(path).expect("list").is_empty(), "建分支会消费掉那条 stash");
+        assert_eq!(
+            fs::read_to_string(path.join("a.txt")).expect("read"),
+            "改点\n"
+        );
+        assert!(
+            list(path).expect("list").is_empty(),
+            "建分支会消费掉那条 stash"
+        );
     }
 
     #[test]
     fn only_shapes_git_emitted_are_accepted() {
-        for bad in ["", "  ", "stash@", "stash@{x}", "stash@{0} extra", "--all", "HEAD"] {
+        for bad in [
+            "",
+            "  ",
+            "stash@",
+            "stash@{x}",
+            "stash@{0} extra",
+            "--all",
+            "HEAD",
+        ] {
             let err = check_reference(bad).expect_err("该拒绝：{bad}");
             assert!(format!("{err:?}").contains("stash 引用"), "{err:?}");
         }
-        assert_eq!(check_reference(" stash@{12} ").ok(), Some("stash@{12}".to_string()));
+        assert_eq!(
+            check_reference(" stash@{12} ").ok(),
+            Some("stash@{12}".to_string())
+        );
     }
 
     #[test]

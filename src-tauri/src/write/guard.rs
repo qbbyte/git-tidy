@@ -253,11 +253,7 @@ pub fn undo_last(
         head_before: head_before.to_string(),
         head_after: head_after.to_string(),
     };
-    crate::git::process::run(
-        Some(&path),
-        &["reset", "--hard", head_before],
-    )?
-    .expect_success()?;
+    crate::git::process::run(Some(&path), &["reset", "--hard", head_before])?.expect_success()?;
 
     // 还原点完成使命后删掉；但先复制一份到报告里，用户还能从日志里读到它
     let _ = backup::drop(&path, &entry.backup_ref);
@@ -317,11 +313,7 @@ fn precheck(request: &Request) -> Result<(), GitError> {
 ///
 /// 分支也要切回去：cherry-pick / revert 一类命令可能停在另一个分支上，只挪分支指针
 /// 的话用户会发现自己还站在一个半路上（而且那个分支上留着这次操作的痕迹）。
-fn rollback(
-    path: &Path,
-    head_before: Option<&str>,
-    branch: Option<&str>,
-) -> Result<(), GitError> {
+fn rollback(path: &Path, head_before: Option<&str>, branch: Option<&str>) -> Result<(), GitError> {
     let Some(head_before) = head_before else {
         // 空仓库上的写操作：没有提交可退，退回"清掉索引"就够了
         crate::git::process::run(Some(path), &["reset", "-q"])?;
@@ -338,11 +330,8 @@ fn rollback(
                 Some(path),
                 &["update-ref", &format!("refs/heads/{branch}"), head_before],
             );
-            crate::git::process::run(
-                Some(path),
-                &["checkout", "--force", "-q", branch],
-            )?
-            .expect_success()?;
+            crate::git::process::run(Some(path), &["checkout", "--force", "-q", branch])?
+                .expect_success()?;
             crate::git::process::run(Some(path), &["reset", "--hard", head_before])?
                 .expect_success()?;
             Ok(())
@@ -366,7 +355,10 @@ pub fn tree_of(path: &Path, head: Option<&str>) -> Result<Option<String>, GitErr
     let Some(head) = head else {
         return Ok(None);
     };
-    let out = crate::git::process::run(Some(path), &["rev-parse", "-q", "--verify", &format!("{head}^{{tree}}")])?;
+    let out = crate::git::process::run(
+        Some(path),
+        &["rev-parse", "-q", "--verify", &format!("{head}^{{tree}}")],
+    )?;
     if !out.success {
         return Ok(None);
     }
@@ -442,7 +434,9 @@ mod tests {
             outcome.head_before,
             "还原点必须指回执行前的 HEAD"
         );
-        let entry = journal::last(&lock(&db.conn), 1).expect("last").expect("有一条");
+        let entry = journal::last(&lock(&db.conn), 1)
+            .expect("last")
+            .expect("有一条");
         assert_eq!(entry.status, journal::Status::Ok);
         assert_eq!(entry.backup_ref, outcome.backup_ref);
     }
@@ -466,10 +460,20 @@ mod tests {
         };
 
         assert!(result.is_err());
-        assert_eq!(head_sha(dir.path()).expect("head").as_deref(), Some(before.as_str()));
-        let current = current_branch(dir.path()).expect("branch").expect("在某个分支上");
-        assert_eq!(current, "main", "回滚要回到执行前的分支，不是留在新建的那个上");
-        let entry = journal::last(&lock(&db.conn), 1).expect("last").expect("有一条");
+        assert_eq!(
+            head_sha(dir.path()).expect("head").as_deref(),
+            Some(before.as_str())
+        );
+        let current = current_branch(dir.path())
+            .expect("branch")
+            .expect("在某个分支上");
+        assert_eq!(
+            current, "main",
+            "回滚要回到执行前的分支，不是留在新建的那个上"
+        );
+        let entry = journal::last(&lock(&db.conn), 1)
+            .expect("last")
+            .expect("有一条");
         assert_eq!(entry.status, journal::Status::RolledBack);
         assert!(entry.detail.unwrap().contains("故意失败"));
     }
@@ -491,7 +495,10 @@ mod tests {
         };
 
         let err = result.expect_err("tree 变了就该被拒");
-        assert!(matches!(err, GitError::VerificationFailed { .. }), "{err:?}");
+        assert!(
+            matches!(err, GitError::VerificationFailed { .. }),
+            "{err:?}"
+        );
         assert_eq!(
             head_sha(dir.path()).expect("head").as_deref(),
             Some(before.as_str()),
@@ -507,7 +514,10 @@ mod tests {
 
         let outcome = {
             let mut body = || {
-                git_in(dir.path(), &["commit", "-q", "--amend", "-m", "refactor: 改个标题"]);
+                git_in(
+                    dir.path(),
+                    &["commit", "-q", "--amend", "-m", "refactor: 改个标题"],
+                );
                 Ok(())
             };
             run(&db, request(&dir, "reword").verifying_tree(), &mut body).expect("tree 一致就该过")
@@ -590,7 +600,8 @@ mod tests {
         commit_touching_a(dir.path(), "别人改的\n", "feat: 别人提交的");
         let now = head_sha(dir.path()).expect("head").expect("有提交");
 
-        let err = undo_last(&db, 1, dir.path().to_path_buf(), now.clone()).expect_err("HEAD 变了就该拒");
+        let err =
+            undo_last(&db, 1, dir.path().to_path_buf(), now.clone()).expect_err("HEAD 变了就该拒");
         assert!(matches!(err, GitError::HeadMoved { .. }), "{err:?}");
         assert_eq!(
             head_sha(dir.path()).expect("head").as_deref(),

@@ -54,7 +54,10 @@ impl Opts {
     }
 
     fn clean() -> Opts {
-        Opts { clean: true, ..Opts::light() }
+        Opts {
+            clean: true,
+            ..Opts::light()
+        }
     }
 
     fn rewriting() -> Opts {
@@ -176,7 +179,11 @@ pub async fn branch_delete(
 ) -> Result<Outcome, GitError> {
     let db = state.inner().clone();
     let path = worktree(&db, id).await?;
-    let action = if force { "branch_delete_force" } else { "branch_delete" };
+    let action = if force {
+        "branch_delete_force"
+    } else {
+        "branch_delete"
+    };
     write(
         db,
         id,
@@ -482,9 +489,14 @@ pub async fn op_abort(state: State<'_, Arc<Db>>, id: i64) -> Result<reset::Abort
     let path = worktree(&db, id).await?;
     // 先读一次中断态：退回之后标记文件就没了，事后读不到是哪一种
     let before = crate::git::refs::interrupt(&path)?;
-    write(db, id, path.clone(), "operation_abort", Opts::clean(), move |path| {
-        reset::abort(path).map(|_| ())
-    })
+    write(
+        db,
+        id,
+        path.clone(),
+        "operation_abort",
+        Opts::clean(),
+        move |path| reset::abort(path).map(|_| ()),
+    )
     .await?;
     Ok(reset::AbortOutcome {
         aborted: before.kind.label().to_string(),
@@ -503,7 +515,9 @@ pub async fn remote_fetch(
 ) -> Result<SyncReport, GitError> {
     let path = worktree(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || {
-        sync::fetch(&path, remote.as_deref(), |line| emit(&app, id, "fetch", line))
+        sync::fetch(&path, remote.as_deref(), |line| {
+            emit(&app, id, "fetch", line)
+        })
     })
     .await
     .map_err(|err| GitError::Internal(err.to_string()))?
@@ -555,7 +569,8 @@ pub async fn remote_push(
         let mut captured: Option<SyncReport> = None;
         guard::run(
             &db,
-            Request::new(id, path.clone(), "push").affecting(Some(remote.clone()), Some(branch.clone())),
+            Request::new(id, path.clone(), "push")
+                .affecting(Some(remote.clone()), Some(branch.clone())),
             &mut || {
                 let report = sync::push(&path, &remote, &branch, set_upstream, force_with_lease)?;
                 captured = Some(report);
@@ -634,7 +649,11 @@ pub async fn rewrite_run(
     let path = worktree(&db, id).await?;
 
     let drops = todo.iter().any(|item| item.action.changes_tree());
-    let mut opts = if drops { Opts::clean() } else { Opts::rewriting() };
+    let mut opts = if drops {
+        Opts::clean()
+    } else {
+        Opts::rewriting()
+    };
     opts = opts
         .at(expected_head.clone())
         .affecting(Some(base.clone()), expected_head);
@@ -645,10 +664,9 @@ pub async fn rewrite_run(
         let mut body = |path: &Path| -> Result<(), GitError> {
             // 这两个值必须在 body 里现读：guard 已经建好还原点，但它不把执行前的
             // HEAD / 分支交给 body，而 `promote` 的乐观锁就靠它们
-            let old_head = guard::head_sha(path)?
-                .ok_or_else(|| GitError::DetachedHead {
-                    detail: "仓库还没有任何提交".into(),
-                })?;
+            let old_head = guard::head_sha(path)?.ok_or_else(|| GitError::DetachedHead {
+                detail: "仓库还没有任何提交".into(),
+            })?;
             let branch = guard::current_branch(path)?.ok_or_else(|| GitError::DetachedHead {
                 detail: "先把这次改写落在某个分支上再试".into(),
             })?;
@@ -656,13 +674,21 @@ pub async fn rewrite_run(
             let report = rewrite::run(path, &base, &old_head, &todo, &mut |line| {
                 emit(&app, id, action, line)
             })?;
-            rewrite::promote(path, &branch, &old_head, &report.new_head, &report.temp_branch)?;
+            rewrite::promote(
+                path,
+                &branch,
+                &old_head,
+                &report.new_head,
+                &report.temp_branch,
+            )?;
             captured = Some(report);
             Ok(())
         };
-        let outcome = guard::run(&db, opts.into_request(id, path.clone(), action), &mut || {
-            body(&path)
-        })?;
+        let outcome = guard::run(
+            &db,
+            opts.into_request(id, path.clone(), action),
+            &mut || body(&path),
+        )?;
         Ok((outcome, captured.expect("body 跑过就一定有结果")))
     })
     .await
@@ -681,7 +707,10 @@ pub async fn rewrite_plan_size(
     let path = worktree(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || {
         let count = rewrite::plan(&path, &base, &head)?.len();
-        Ok(PlanSize { count, large: count >= rewrite::LARGE_TODO })
+        Ok(PlanSize {
+            count,
+            large: count >= rewrite::LARGE_TODO,
+        })
     })
     .await
     .map_err(|err| GitError::Internal(err.to_string()))?
@@ -761,10 +790,7 @@ pub struct StagedFiles {
 ///
 /// 读操作，不进 write_guard：它不改变任何东西，只是把索引里的三个 stage 摊给界面。
 #[tauri::command]
-pub async fn conflict_list(
-    state: State<'_, Arc<Db>>,
-    id: i64,
-) -> Result<Vec<Conflict>, GitError> {
+pub async fn conflict_list(state: State<'_, Arc<Db>>, id: i64) -> Result<Vec<Conflict>, GitError> {
     let repo_path = worktree(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || conflict::list(&repo_path))
         .await
@@ -1046,10 +1072,7 @@ mod tests {
         let light = Opts::light();
         assert!(!light.clean, "暂存/stash 不该要求干净");
         assert!(Opts::clean().clean, "切换/reset 要求干净");
-        assert!(
-            Opts::rewriting().verifying_tree,
-            "改写类必须做 tree 校验"
-        );
+        assert!(Opts::rewriting().verifying_tree, "改写类必须做 tree 校验");
     }
 
     fn sample(status: journal::Status) -> WriteOp {

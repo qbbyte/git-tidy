@@ -32,7 +32,11 @@ pub fn fetch<F>(repo: &Path, remote: Option<&str>, mut on_line: F) -> Result<Syn
 where
     F: FnMut(&str),
 {
-    let mut args = vec!["fetch".to_string(), "--prune".to_string(), "--tags".to_string()];
+    let mut args = vec![
+        "fetch".to_string(),
+        "--prune".to_string(),
+        "--tags".to_string(),
+    ];
     if let Some(remote) = remote {
         args.push(remote.to_string());
     }
@@ -65,7 +69,8 @@ where
             || stderr.contains("cannot pull with rebase")
         {
             return Err(GitError::Diverged {
-                detail: "本地与远程已经分叉，默认的快进拉取停在这里。请选择合并或变基后再拉一次".into(),
+                detail: "本地与远程已经分叉，默认的快进拉取停在这里。请选择合并或变基后再拉一次"
+                    .into(),
             });
         }
     }
@@ -229,7 +234,10 @@ mod tests {
         must(&work, &["config", "user.name", "测试者"]);
         must(&work, &["config", "user.email", "t@example.com"]);
         must(&work, &["config", "core.autocrlf", "false"]);
-        must(&work, &["remote", "add", "origin", bare.to_string_lossy().as_ref()]);
+        must(
+            &work,
+            &["remote", "add", "origin", bare.to_string_lossy().as_ref()],
+        );
         fs::write(work.join("a.txt"), "1\n").expect("write");
         must(&work, &["add", "-A"]);
         must(&work, &["commit", "-q", "-m", "feat: 基线"]);
@@ -251,19 +259,21 @@ mod tests {
         must(&other, &["init", "-q", "-b", "main", "."]);
         must(&other, &["config", "user.name", "别人"]);
         must(&other, &["config", "user.email", "other@example.com"]);
-        must(&other, &["remote", "add", "origin", bare.to_string_lossy().as_ref()]);
+        must(
+            &other,
+            &["remote", "add", "origin", bare.to_string_lossy().as_ref()],
+        );
         must(&other, &["fetch", "-q", "origin"]);
         must(&other, &["checkout", "-q", "-B", "main", "origin/main"]);
         commit(&other, "别人改的\n", "fix: 别人推了一条");
         must(&other, &["push", "-q", "origin", "main"]);
 
         let mut lines: Vec<String> = Vec::new();
-        let report = fetch(&work, Some("origin"), |line| lines.push(line.to_string()))
-            .expect("fetch");
+        let report =
+            fetch(&work, Some("origin"), |line| lines.push(line.to_string())).expect("fetch");
         assert_eq!(report.action, "fetch");
         assert!(
-            must(&work, &["rev-parse", "origin/main"])
-                != must(&work, &["rev-parse", "HEAD"]),
+            must(&work, &["rev-parse", "origin/main"]) != must(&work, &["rev-parse", "HEAD"]),
             "fetch 之后远程引用要指到别人的提交上"
         );
     }
@@ -298,7 +308,10 @@ mod tests {
         must(&other, &["init", "-q", "-b", "main", "."]);
         must(&other, &["config", "user.name", "别人"]);
         must(&other, &["config", "user.email", "other@example.com"]);
-        must(&other, &["remote", "add", "origin", bare.to_string_lossy().as_ref()]);
+        must(
+            &other,
+            &["remote", "add", "origin", bare.to_string_lossy().as_ref()],
+        );
         must(&other, &["fetch", "-q", "origin"]);
         must(&other, &["checkout", "-q", "-B", "shared", "origin/shared"]);
         commit(&other, "别人写的\n", "fix: 别人先推");
@@ -331,7 +344,10 @@ mod tests {
         must(&other, &["init", "-q", "-b", "main", "."]);
         must(&other, &["config", "user.name", "别人"]);
         must(&other, &["config", "user.email", "other@example.com"]);
-        must(&other, &["remote", "add", "origin", bare.to_string_lossy().as_ref()]);
+        must(
+            &other,
+            &["remote", "add", "origin", bare.to_string_lossy().as_ref()],
+        );
         must(&other, &["fetch", "-q", "origin"]);
         must(&other, &["checkout", "-q", "-B", "main", "origin/main"]);
         commit(&other, "别人的\n", "fix: 远程一条");
@@ -343,7 +359,10 @@ mod tests {
         must(&work, &["fetch", "-q", "origin"]);
         must(&work, &["reset", "-q", "--hard", "HEAD"]);
         commit(&work, "本地第二条\n", "feat: 本地第二条");
-        must(&work, &["update-ref", "refs/remotes/origin/main", &remote_tip]);
+        must(
+            &work,
+            &["update-ref", "refs/remotes/origin/main", &remote_tip],
+        );
 
         let err = pull(&work, Some("origin"), PullStrategy::FfOnly, |_| {})
             .expect_err("分叉时快进拉取必须停");
@@ -352,7 +371,10 @@ mod tests {
             GitError::Diverged { detail } => detail,
             _ => unreachable!(),
         };
-        assert!(message.contains("合并") || message.contains("变基"), "{message}");
+        assert!(
+            message.contains("合并") || message.contains("变基"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -363,7 +385,10 @@ mod tests {
         must(&other, &["init", "-q", "-b", "main", "."]);
         must(&other, &["config", "user.name", "别人"]);
         must(&other, &["config", "user.email", "other@example.com"]);
-        must(&other, &["remote", "add", "origin", bare.to_string_lossy().as_ref()]);
+        must(
+            &other,
+            &["remote", "add", "origin", bare.to_string_lossy().as_ref()],
+        );
         must(&other, &["fetch", "-q", "origin"]);
         must(&other, &["checkout", "-q", "-B", "main", "origin/main"]);
         commit(&other, "别人的\n", "fix: 远程一条");

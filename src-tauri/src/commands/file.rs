@@ -20,7 +20,8 @@ pub async fn file_blame(
     path: String,
     ignore_revs: Option<Vec<String>>,
 ) -> Result<blame::Blame, GitError> {
-    let (repo_path, _kind) = query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
+    let (repo_path, _kind) =
+        query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
     let rev = check_rev(&rev)?;
     let path = check_path(&path)?;
     // 忽略清单每一条都要进 git 的参数位，所以逐条按提交号判一次
@@ -40,7 +41,8 @@ pub async fn file_history(
     skip: usize,
     limit: usize,
 ) -> Result<log::CommitPage, GitError> {
-    let (repo_path, _kind) = query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
+    let (repo_path, _kind) =
+        query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
     let path = check_path(&path)?;
     let limit = limit.clamp(1, MAX_PAGE_SIZE);
 
@@ -56,7 +58,8 @@ pub async fn file_tree(
     id: i64,
     rev: String,
 ) -> Result<Vec<tree::Entry>, GitError> {
-    let (repo_path, _kind) = query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
+    let (repo_path, _kind) =
+        query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
     let rev = check_rev(&rev)?;
 
     tauri::async_runtime::spawn_blocking(move || tree::list(&repo_path, &rev))
@@ -72,7 +75,8 @@ pub async fn file_content(
     rev: String,
     path: String,
 ) -> Result<tree::Content, GitError> {
-    let (repo_path, _kind) = query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
+    let (repo_path, _kind) =
+        query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
     let rev = check_rev(&rev)?;
     let path = check_path(&path)?;
 
@@ -122,8 +126,7 @@ fn check_path(path: &str) -> Result<String, GitError> {
 }
 
 fn check_shas(shas: Vec<String>) -> Result<Vec<String>, GitError> {
-    shas
-        .iter()
+    shas.iter()
         .map(|sha| super::detail::check_sha(sha))
         .collect()
 }
@@ -141,10 +144,7 @@ mod tests {
             Some("HEAD~2".to_string()),
             "带波浪号的表达式是常用形态"
         );
-        assert_eq!(
-            check_rev(&"a".repeat(40)).ok(),
-            Some("a".repeat(40))
-        );
+        assert_eq!(check_rev(&"a".repeat(40)).ok(), Some("a".repeat(40)));
         assert_eq!(check_rev("  v1.0  ").ok(), Some("v1.0".to_string()));
     }
 
@@ -168,7 +168,10 @@ mod tests {
 
     #[test]
     fn a_path_must_stay_inside_the_repository() {
-        assert_eq!(check_path("src/main.rs").ok(), Some("src/main.rs".to_string()));
+        assert_eq!(
+            check_path("src/main.rs").ok(),
+            Some("src/main.rs".to_string())
+        );
         assert_eq!(
             check_path("中文目录/文件名.md").ok(),
             Some("中文目录/文件名.md".to_string()),

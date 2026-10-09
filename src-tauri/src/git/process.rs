@@ -132,11 +132,7 @@ pub fn run_streaming(
 /// `stdin` 非空时按需写入后立刻关闭管道（`--batch-check` 就是靠读到 EOF 才收工）。
 /// 写在前、读在后，所以喂进去的量要小：本项目只喂"这一条提交里的对象号"，几十行，
 /// 撑不满管道，不会和子进程的输出互相堵死。
-pub fn run_bytes(
-    repo: Option<&Path>,
-    args: &[&str],
-    stdin: &[u8],
-) -> Result<ByteOutput, GitError> {
+pub fn run_bytes(repo: Option<&Path>, args: &[&str], stdin: &[u8]) -> Result<ByteOutput, GitError> {
     let mut cmd = build(repo, args, &[])?;
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
     let mut child = cmd.spawn()?;

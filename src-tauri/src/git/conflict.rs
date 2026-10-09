@@ -1,4 +1,4 @@
-﻿//! 合并冲突解决器（§7.13）。
+//! 合并冲突解决器（§7.13）。
 //!
 //! 状态来源是索引里的三个 stage，不是工作区文件：
 //! - stage 1 = 共同祖先（base）
@@ -224,7 +224,14 @@ fn resolve_gitlink(repo: &Path, path: &str, how: &Resolution) -> Result<Option<(
     };
     process::run(
         Some(repo),
-        &["update-index", "--add", "--cacheinfo", SUBMODULE_MODE, &entry.oid, path],
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            SUBMODULE_MODE,
+            &entry.oid,
+            path,
+        ],
     )?
     .expect_success()?;
     Ok(Some(()))
@@ -238,7 +245,8 @@ pub fn accept_deletion(repo: &Path, path: &str) -> Result<(), GitError> {
     let target = absolute(repo, path)?;
     // Windows 上文件可能被别的进程占着，删不掉就说清楚，别把索引先改了留下不一致
     if target.exists() {
-        std::fs::remove_file(&target).map_err(|err| GitError::Internal(format!("无法删除 {path}：{err}")))?;
+        std::fs::remove_file(&target)
+            .map_err(|err| GitError::Internal(format!("无法删除 {path}：{err}")))?;
     }
     process::run(Some(repo), &["add", "-A", "--", path])?.expect_success()?;
     Ok(())
@@ -297,10 +305,14 @@ fn build(repo: &Path, path: String, group: Vec<StageEntry>) -> Result<Conflict, 
 
     // 一个冲突条目至少要有两个 stage：一个 stage 是普通待提交文件，不是冲突。
     // 少于两个说明索引被外部改过（另一个进程、坏了的 rebase），报出来而不是画一张空卡片
-    if [base_entry.is_some(), ours_entry.is_some(), theirs_entry.is_some()]
-        .iter()
-        .filter(|present| **present)
-        .count()
+    if [
+        base_entry.is_some(),
+        ours_entry.is_some(),
+        theirs_entry.is_some(),
+    ]
+    .iter()
+    .filter(|present| **present)
+    .count()
         < 2
     {
         return Err(GitError::ParseFailure {
@@ -321,7 +333,10 @@ fn build(repo: &Path, path: String, group: Vec<StageEntry>) -> Result<Conflict, 
     let status = unmerged_status(base.is_some(), ours.is_some(), theirs.is_some());
     let other_path = other_path_of(repo, &path, &ours_entry, &theirs_entry)?;
     // 任一在场的是二进制或子模块指针，就不是能逐块合并的文本冲突
-    let any_binary = [&base, &ours, &theirs].into_iter().flatten().any(|c| c.binary);
+    let any_binary = [&base, &ours, &theirs]
+        .into_iter()
+        .flatten()
+        .any(|c| c.binary);
     let submodule = [base_entry, ours_entry, theirs_entry]
         .into_iter()
         .flatten()
@@ -441,15 +456,23 @@ fn entries_paths(repo: &Path, path: &str) -> Vec<String> {
 /// 界面只需要知道它没有正文。
 fn content_of(repo: &Path, oid: &str, mode: &str) -> Result<StageContent, GitError> {
     if mode == SUBMODULE_MODE {
-        return Ok(StageContent { text: None, size: 0, binary: true });
+        return Ok(StageContent {
+            text: None,
+            size: 0,
+            binary: true,
+        });
     }
 
     let size = process::run(Some(repo), &["cat-file", "-s", oid])?.expect_success()?;
-    let size = size.trim().parse::<u64>().map_err(|_| GitError::ParseFailure {
-        snippet: process::snippet(&format!("{oid} 的大小读不出来")),
-    })?;
+    let size = size
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| GitError::ParseFailure {
+            snippet: process::snippet(&format!("{oid} 的大小读不出来")),
+        })?;
 
-    let bytes = process::run_bytes(Some(repo), &["cat-file", "blob", oid], &[])?.expect_success()?;
+    let bytes =
+        process::run_bytes(Some(repo), &["cat-file", "blob", oid], &[])?.expect_success()?;
     // 文本判定只看前 8 KB：扫完几 MB 只为了找一个 NUL 不值当
     let binary = bytes[..bytes.len().min(8192)].contains(&0);
     Ok(StageContent {
@@ -470,7 +493,11 @@ fn stage_bytes(repo: &Path, path: &str, stage: u8) -> Result<Vec<u8>, GitError> 
         return Err(GitError::NotClean {
             detail: format!(
                 "{path} 没有第 {stage} 版（{}），要接受删除请用「接受删除」",
-                if stage == 2 { "我方把它删了" } else { "对方把它删了" }
+                if stage == 2 {
+                    "我方把它删了"
+                } else {
+                    "对方把它删了"
+                }
             ),
         });
     }
@@ -499,11 +526,11 @@ const SUBMODULE_MODE: &str = "160000";
 /// 界面给的路径本来也只可能是索引里那些，但校验放在 Rust 侧才有效。
 fn absolute(repo: &Path, path: &str) -> Result<std::path::PathBuf, GitError> {
     if path.is_empty() || path.contains('\0') {
-        return Err(GitError::ParseFailure { snippet: process::snippet(path) });
+        return Err(GitError::ParseFailure {
+            snippet: process::snippet(path),
+        });
     }
-    let root = repo
-        .canonicalize()
-        .map_err(|_| GitError::NotARepo)?;
+    let root = repo.canonicalize().map_err(|_| GitError::NotARepo)?;
     let joined = root.join(path);
     let normalized = normalize(&joined);
     if !normalized.starts_with(&root) {
@@ -558,9 +585,11 @@ fn parse_unmerged(raw: &str) -> Result<Vec<StageEntry>, GitError> {
                 snippet: process::snippet(record),
             });
         }
-        let stage = fields[2].parse::<u8>().map_err(|_| GitError::ParseFailure {
-            snippet: process::snippet(record),
-        })?;
+        let stage = fields[2]
+            .parse::<u8>()
+            .map_err(|_| GitError::ParseFailure {
+                snippet: process::snippet(record),
+            })?;
         entries.push(StageEntry {
             path: path.to_string(),
             mode: fields[0].to_string(),
@@ -671,15 +700,33 @@ mod tests {
         assert!(card.kind.three_way(), "内容冲突要能逐块合并");
 
         let sides = &card.sides;
-        assert_eq!(sides.base.as_ref().unwrap().text.as_deref(), Some("第一行\n第二行\n第三行\n"));
-        assert_eq!(sides.ours.as_ref().unwrap().text.as_deref(), Some("第一行\n主线\n第三行\n"), "ours 是 HEAD，也就是 main");
-        assert_eq!(sides.theirs.as_ref().unwrap().text.as_deref(), Some("第一行\n并入\n第三行\n"), "theirs 是被合进来的 side");
+        assert_eq!(
+            sides.base.as_ref().unwrap().text.as_deref(),
+            Some("第一行\n第二行\n第三行\n")
+        );
+        assert_eq!(
+            sides.ours.as_ref().unwrap().text.as_deref(),
+            Some("第一行\n主线\n第三行\n"),
+            "ours 是 HEAD，也就是 main"
+        );
+        assert_eq!(
+            sides.theirs.as_ref().unwrap().text.as_deref(),
+            Some("第一行\n并入\n第三行\n"),
+            "theirs 是被合进来的 side"
+        );
         assert!(!sides.binary);
 
         // 三方视图必须来自 stage，不能是工作区那份带标记的草稿
         let draft = card.worktree_text.as_deref().expect("有草稿");
         assert!(draft.contains("<<<<<<<"), "工作区里留的应该是带标记的版本");
-        assert!(!sides.ours.as_ref().unwrap().text.as_deref().unwrap().contains("<<<<<<<"));
+        assert!(!sides
+            .ours
+            .as_ref()
+            .unwrap()
+            .text
+            .as_deref()
+            .unwrap()
+            .contains("<<<<<<<"));
     }
 
     #[test]
@@ -688,7 +735,10 @@ mod tests {
 
         resolve(&path, "a.txt", Resolution::Theirs).expect("取对方");
 
-        assert!(list(&path).expect("列表").is_empty(), "解决之后索引里不该再有 stage");
+        assert!(
+            list(&path).expect("列表").is_empty(),
+            "解决之后索引里不该再有 stage"
+        );
         assert_eq!(
             std::fs::read_to_string(path.join("a.txt")).expect("读回"),
             "第一行\n并入\n第三行\n",
@@ -703,8 +753,12 @@ mod tests {
     fn a_hand_edited_result_is_written_back_verbatim() {
         let (_dir, path) = content_conflict();
 
-        resolve(&path, "a.txt", Resolution::Text("第一行\n拼好的\n第三行\n".into()))
-            .expect("手改结果");
+        resolve(
+            &path,
+            "a.txt",
+            Resolution::Text("第一行\n拼好的\n第三行\n".into()),
+        )
+        .expect("手改结果");
 
         assert!(list(&path).expect("列表").is_empty());
         assert_eq!(
@@ -736,7 +790,10 @@ mod tests {
         assert_eq!(card.kind, ConflictKind::ModifyDelete);
         assert!(card.kind.pick_side_only(), "改删只能选一边");
         assert!(!card.kind.three_way(), "没有祖先可当基准，不能逐块合并");
-        assert!(card.sides.base.is_some(), "改删仍然有共同祖先，三方里只剩两方");
+        assert!(
+            card.sides.base.is_some(),
+            "改删仍然有共同祖先，三方里只剩两方"
+        );
         assert!(card.sides.theirs.is_none(), "对方删了这个文件，没有第三版");
         assert!(
             card.sides.ours.is_some(),
@@ -745,7 +802,10 @@ mod tests {
 
         accept_deletion(&path, "gone.txt").expect("接受删除");
         assert!(list(&path).expect("列表").is_empty());
-        assert!(!path.join("gone.txt").exists(), "接受删除要把工作区里的它也删掉");
+        assert!(
+            !path.join("gone.txt").exists(),
+            "接受删除要把工作区里的它也删掉"
+        );
     }
 
     #[test]
@@ -793,7 +853,10 @@ mod tests {
         let card = &list(&path).expect("列表")[0];
         assert_eq!(card.kind, ConflictKind::Binary);
         assert!(card.sides.binary);
-        assert!(card.sides.ours.as_ref().unwrap().text.is_none(), "二进制不给正文");
+        assert!(
+            card.sides.ours.as_ref().unwrap().text.is_none(),
+            "二进制不给正文"
+        );
         assert!(card.worktree_text.is_none(), "二进制草稿也不给");
 
         // 取一边必须按字节原样落盘：走一次 UTF-8 往返就把文件写坏了。theirs 是 side 那份
@@ -818,7 +881,14 @@ mod tests {
         let child_base = git_in(&child, &["rev-parse", "HEAD"]);
         git_in(
             &path,
-            &["update-index", "--add", "--cacheinfo", "160000", &child_base, "sub"],
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000",
+                &child_base,
+                "sub",
+            ],
         );
         commit_index(&path, "feat: 加子模块");
 
@@ -864,7 +934,10 @@ mod tests {
         let card = &cards[0];
         assert_eq!(card.path, "sub");
         assert_eq!(card.kind, ConflictKind::Submodule);
-        assert!(card.sides.ours.as_ref().unwrap().text.is_none(), "子模块指针没有正文");
+        assert!(
+            card.sides.ours.as_ref().unwrap().text.is_none(),
+            "子模块指针没有正文"
+        );
         assert!(card.sides.theirs.as_ref().unwrap().text.is_none());
         assert!(card.kind.pick_side_only());
 
@@ -887,7 +960,10 @@ mod tests {
             ConflictKind::Binary,
             ConflictKind::Submodule,
         ] {
-            assert!(kind.three_way() != kind.pick_side_only(), "{kind:?}: 两个标志必须互为反面");
+            assert!(
+                kind.three_way() != kind.pick_side_only(),
+                "{kind:?}: 两个标志必须互为反面"
+            );
             assert!(!kind.label().is_empty(), "{kind:?}: 每一种都要有中文说法");
         }
         // 只有内容冲突才谈得上逐块合并，这是 §7.13 降级穷举的核心一条
@@ -961,11 +1037,8 @@ mod tests {
     fn a_continuation_never_opens_an_editor() {
         // `core.editor=true` 与 GIT_EDITOR 一起注入，merge 的续跑不该等着人来敲键
         let (_dir, path) = content_conflict();
-        std::fs::write(
-            path.join(".git").join("MERGE_MSG"),
-            "feat: 合起来\n",
-        )
-        .expect("写 MERGE_MSG");
+        std::fs::write(path.join(".git").join("MERGE_MSG"), "feat: 合起来\n")
+            .expect("写 MERGE_MSG");
 
         resolve(&path, "a.txt", Resolution::Ours).expect("取我方");
         // 不给超时：编辑器真弹出来的话这个用例会挂住，而不是安静地失败
@@ -1003,8 +1076,14 @@ mod tests {
             "第一行\n被摘的\n第二行\n"
         );
         continue_operation(&path, Interrupt::CherryPick, None).expect("续跑");
-        assert_eq!(refs::interrupt(&path).expect("中断态").kind, Interrupt::None);
-        assert_eq!(git_in(&path, &["log", "-1", "--pretty=%s"]), "feat: 被摘的提交");
+        assert_eq!(
+            refs::interrupt(&path).expect("中断态").kind,
+            Interrupt::None
+        );
+        assert_eq!(
+            git_in(&path, &["log", "-1", "--pretty=%s"]),
+            "feat: 被摘的提交"
+        );
     }
 
     #[test]
@@ -1014,8 +1093,7 @@ mod tests {
         commit(dir.path(), "feat: 基线");
 
         for evil in ["../outside.txt", "a/../../outside.txt", "", "a\0b"] {
-            let err = resolve(dir.path(), evil, Resolution::Ours)
-                .expect_err("越界的路径必须被拒");
+            let err = resolve(dir.path(), evil, Resolution::Ours).expect_err("越界的路径必须被拒");
             assert!(
                 matches!(err, GitError::ParseFailure { .. }),
                 "{evil:?} 不该被放行：{err:?}"
@@ -1058,7 +1136,10 @@ mod tests {
         };
 
         let card = &list(&path).expect("列表")[0];
-        assert_eq!(card.path, "有 空格.txt", "路径按第一个 TAB 原样取，不被空格切碎");
+        assert_eq!(
+            card.path, "有 空格.txt",
+            "路径按第一个 TAB 原样取，不被空格切碎"
+        );
         resolve(&path, "有 空格.txt", Resolution::Theirs).expect("解决");
         assert!(list(&path).expect("列表").is_empty());
     }

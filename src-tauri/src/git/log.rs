@@ -18,16 +18,7 @@ use crate::error::GitError;
 /// `%D`（引用装饰）在这里取，不在父子遍历（git/graph.rs）那边取：图那一层的分配结果
 /// 是按 HEAD 的 sha 缓存的，而"打个标签""把分支挪一挪"都不动 HEAD 的 sha，放过去就会
 /// 一直端着过期的徽标。列表每页本来就要起一次 log 进程，顺带就拿到了。
-const FIELDS: &[&str] = &[
-    "%H",
-    "%an",
-    "%ae",
-    "%at",
-    "%P",
-    "%D",
-    "%s",
-    "%b",
-];
+const FIELDS: &[&str] = &["%H", "%an", "%ae", "%at", "%P", "%D", "%s", "%b"];
 const FIELD_HEX: &str = "%x1f";
 const FIELD_SEP: char = '\u{1f}';
 const RECORD_SEP: char = '\0';
@@ -763,14 +754,20 @@ mod tests {
         assert_eq!(c.refs.len(), 1);
         assert_eq!(c.refs[0].name, "main");
         assert_eq!(c.refs[0].kind, RefKind::Branch);
-        assert!(c.refs[0].head, "HEAD 指着的引用要单独标出来，界面靠它做当前样式");
+        assert!(
+            c.refs[0].head,
+            "HEAD 指着的引用要单独标出来，界面靠它做当前样式"
+        );
     }
 
     #[test]
     fn a_detached_head_marks_the_commit_without_inventing_a_ref() {
         // 实测游离 HEAD 时 %D 是一段光秃秃的 `HEAD`，后面照常跟着别的引用
-        let c = parse_commit(&record_for("HEAD, refs/heads/side, tag: refs/tags/v1", "正文"))
-            .expect("解析");
+        let c = parse_commit(&record_for(
+            "HEAD, refs/heads/side, tag: refs/tags/v1",
+            "正文",
+        ))
+        .expect("解析");
         assert!(c.head, "游离 HEAD 也得知道这是当前提交");
         assert_eq!(c.refs.len(), 2, "游离 HEAD 不是一个引用，不该多出一个徽标");
         assert!(c.refs.iter().all(|badge| !badge.head));
@@ -784,22 +781,30 @@ mod tests {
     #[test]
     fn a_comma_inside_a_refname_stays_in_one_badge() {
         // 分支名里可以有逗号、不允许空格，所以按 ", " 切不会把一条名字切成两段（实测）
-        let c = parse_commit(&record_for("HEAD -> refs/heads/feat,with-comma", "正文")).expect("解析");
+        let c =
+            parse_commit(&record_for("HEAD -> refs/heads/feat,with-comma", "正文")).expect("解析");
         assert_eq!(c.refs[0].name, "feat,with-comma");
     }
 
     #[test]
     fn local_and_remote_of_the_same_short_name_are_told_apart() {
         // 这正是选 --decorate=full 的理由：短形式下这两条都显示成 feat/x
-        let c = parse_commit(&record_for("refs/heads/feat/x, refs/remotes/feat/x", "正文")).expect("解析");
+        let c = parse_commit(&record_for(
+            "refs/heads/feat/x, refs/remotes/feat/x",
+            "正文",
+        ))
+        .expect("解析");
         let kinds: Vec<RefKind> = c.refs.iter().map(|badge| badge.kind).collect();
         assert_eq!(kinds, vec![RefKind::Branch, RefKind::Remote]);
     }
 
     #[test]
     fn decoration_items_that_are_not_refs_are_dropped() {
-        let c = parse_commit(&record_for("grafted: 12ab34cd, HEAD -> refs/heads/main", "正文"))
-            .expect("解析");
+        let c = parse_commit(&record_for(
+            "grafted: 12ab34cd, HEAD -> refs/heads/main",
+            "正文",
+        ))
+        .expect("解析");
         assert_eq!(c.refs.len(), 1, "认不出前缀的装饰项画不出徽标");
         assert!(c.head);
     }
@@ -823,7 +828,10 @@ mod tests {
         // 默认分支名由用户的 init.defaultBranch 决定（本机可能是 main 也可能是 master），
         // 这个文件里的用例一律不写死它
         let current = git_in(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]);
-        git_in(dir.path(), &["update-ref", "refs/remotes/origin/upstream", &head]);
+        git_in(
+            dir.path(),
+            &["update-ref", "refs/remotes/origin/upstream", &head],
+        );
 
         let page = plain(dir.path(), 0, 10);
         let top = &page.commits[0];
@@ -956,7 +964,12 @@ mod tests {
     #[test]
     fn a_time_window_is_passed_through_to_git() {
         let dir = repo();
-        commit_at(dir.path(), "old.txt", "feat: 很早以前", Some("2020-01-02T03:04:05+00:00"));
+        commit_at(
+            dir.path(),
+            "old.txt",
+            "feat: 很早以前",
+            Some("2020-01-02T03:04:05+00:00"),
+        );
         commit_at(dir.path(), "new.txt", "feat: 最近", None);
 
         let recent = filtered_list(
@@ -1015,7 +1028,8 @@ mod tests {
         );
         assert_eq!(feats.total, 6, "总数是 git 数的那一组条件，type 不在里面");
         assert_eq!(
-            feats.commits
+            feats
+                .commits
                 .iter()
                 .map(|c| c.subject.as_str())
                 .collect::<Vec<_>>(),
@@ -1095,15 +1109,13 @@ mod tests {
             nodes[0].dangling,
             "最新那条的父是 side 上被筛掉的一条，所以那段边没有落点"
         );
-        assert!(
-            !nodes[1].dangling,
-            "基线是根提交：它下面根本没有边可截断"
-        );
+        assert!(!nodes[1].dangling, "基线是根提交：它下面根本没有边可截断");
         assert!(nodes[1].parents.is_empty());
         assert!(
-            nodes.iter().all(|node| node.parents.iter().all(|parent| nodes
+            nodes.iter().all(|node| node
+                .parents
                 .iter()
-                .any(|other| &other.sha == parent))),
+                .all(|parent| nodes.iter().any(|other| &other.sha == parent))),
             "可见节点里不该还挂着不可见的父"
         );
     }
@@ -1128,11 +1140,13 @@ mod tests {
         );
 
         // 带改名的路径不会误伤其他文件：文件名里的 * 不当通配
-        assert!(file_history(dir.path(), "other.txt", 0, 50)
-            .expect("文件历史")
-            .commits
-            .len()
-            == 1);
+        assert!(
+            file_history(dir.path(), "other.txt", 0, 50)
+                .expect("文件历史")
+                .commits
+                .len()
+                == 1
+        );
     }
 
     #[test]
