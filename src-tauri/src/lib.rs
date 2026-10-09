@@ -75,6 +75,10 @@ pub fn run() {
             commands::write::remote_delete_branch,
             commands::write::file_partial_support,
             commands::write::files_stage_hunks,
+            // §7.14：交互式改写。自驱临时分支，不走 git rebase -i
+            commands::write::rewrite_plan,
+            commands::write::rewrite_plan_size,
+            commands::write::rewrite_run,
             // M3 §7.13：冲突解决器
             commands::write::conflict_list,
             commands::write::conflict_resolve,

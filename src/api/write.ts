@@ -358,6 +358,66 @@ export function conflictContinue(repoId: number, message: string | null = null) 
   return call<Continued>("conflict_continue", { id: repoId, message });
 }
 
+// ---------------------------------------------------------------- 交互式改写（§7.14）
+/** todo 的一个动作。`squash`/`fixup` 并进前一条，`drop` 真的丢掉改动 */
+export type RewriteAction = "pick" | "reword" | "squash" | "fixup" | "drop";
+
+export interface PlanEntry {
+  sha: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  /** ISO 8601。压缩时由 Rust 侧原样还回去 */
+  authoredAt: string;
+}
+
+export interface TodoItem {
+  sha: string;
+  action: RewriteAction;
+  /** 只有 `reword` 用得上：界面给的新提交信息 */
+  message?: string | null;
+}
+
+/** 改写前先看区间有多大。`large` 为真时界面要先提示分段再让人确认 */
+export interface PlanSize {
+  count: number;
+  large: boolean;
+}
+
+export interface RewriteStep {
+  sha: string;
+  action: RewriteAction;
+  /** 压缩与改信息之后提交号一定变，所以每条都报新的 */
+  produced: string;
+}
+
+export interface RewriteReport {
+  oldHead: string;
+  newHead: string;
+  /** 成功时已删掉；失败时留在仓库里供诊断 */
+  tempBranch: string;
+  steps: RewriteStep[];
+  stoppedAt: string | null;
+}
+
+/** todo 的初稿。读操作，不进 write_guard */
+export function rewritePlan(repoId: number, base: string, head: string) {
+  return call<PlanEntry[]>("rewrite_plan", { id: repoId, base, head });
+}
+
+export function rewritePlanSize(repoId: number, base: string, head: string) {
+  return call<PlanSize>("rewrite_plan_size", { id: repoId, base, head });
+}
+
+export function rewriteRun(
+  repoId: number,
+  base: string,
+  todo: TodoItem[],
+  expectedHead: string | null,
+) {
+  return call<[Outcome, RewriteReport]>("rewrite_run", { id: repoId, base, todo, expectedHead });
+}
+
 // ---------------------------------------------------------------- 日志与撤销（§7.17）
 
 export function writeJournal(repoId: number, limit = 50) {
@@ -377,7 +437,7 @@ export function writeUndo(repoId: number) {
   return call<UndoReport>("write_undo", { id: repoId });
 }
 
-/** 远程命令的进度事件名，与 Rust 侧 `commands::write::SYNC_PROGRESS_EVENT` 一致 */
+/** 远程命令与改写的进度事件名，与 Rust 侧 `commands::write::SYNC_PROGRESS_EVENT` 一致 */
 export const SYNC_PROGRESS_EVENT = "sync-progress";
 
 export interface SyncProgress {

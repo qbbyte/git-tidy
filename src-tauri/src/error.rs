@@ -53,6 +53,9 @@ pub enum GitError {
     /// git 输出与预期的记录结构不符：分隔符数量对不上、时间戳位置落进非数字。
     /// 只把截断后的原文片段放进 detail，用户看到的是通用文案。
     ParseFailure { snippet: String },
+    /// 仓库停在游离 HEAD 上（没有分支可指）。分支级改写在这里没有落脚点：
+    /// `update-ref refs/heads/x` 造不出一个用户没要过的分支，所以直接拒。
+    DetachedHead { detail: String },
     /// 阻塞任务 panic，或异步运行时丢任务
     Internal(String),
 }
@@ -78,6 +81,7 @@ impl GitError {
             Self::PatchApplyFailed { .. } => "patch_apply_failed",
             Self::Diverged { .. } => "diverged",
             Self::ParseFailure { .. } => "parse_failure",
+            Self::DetachedHead { .. } => "detached_head",
             Self::Internal(_) => "internal",
         }
     }
@@ -137,6 +141,9 @@ impl GitError {
                 "选中的改动没法按补丁暂存，索引没有被动过：{detail}"
             ),
             Self::Diverged { detail } => format!("与远程已经分叉：{detail}"),
+            Self::DetachedHead { detail } => format!(
+                "仓库当前停在游离 HEAD 上，没有分支可以承接这次改写：{detail}"
+            ),
             Self::Internal(_) => "工具内部错误，请重试".into(),
         }
     }
@@ -157,6 +164,7 @@ impl GitError {
             Self::AuthRequired { detail } => Some(detail.clone()),
             Self::PatchApplyFailed { detail } => Some(detail.clone()),
             Self::Diverged { detail } => Some(detail.clone()),
+            Self::DetachedHead { detail } => Some(detail.clone()),
             Self::Internal(msg) => Some(msg.clone()),
             _ => None,
         }

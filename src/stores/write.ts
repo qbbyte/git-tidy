@@ -20,6 +20,13 @@ import {
   remotePush,
   resetTo,
   revertCommit,
+  rewritePlan as rewritePlanApi,
+  rewritePlanSize as rewritePlanSizeApi,
+  rewriteRun as rewriteRunApi,
+  type PlanEntry,
+  type PlanSize,
+  type RewriteReport,
+  type TodoItem,
   stashApply,
   stashBranch,
   stashDrop,
@@ -48,6 +55,11 @@ function wrap(err: unknown): GitTidyError {
   return err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
 }
 
+/** 提交号在界面文案里只给前 8 位：两串 40 位并排没人读得下去 */
+function shortSha(sha: string): string {
+  return sha.slice(0, 8);
+}
+
 /**
  * 写操作的状态层（M2）。
  *
@@ -74,6 +86,17 @@ export const useWriteStore = defineStore("write", () => {
   const syncAction = ref<string | null>(null);
   /** 删分支前查到的"会丢多少" */
   const deletable = shallowRef<Record<string, Deletable>>({});
+
+  /** 改写面板的 todo（§7.14）。空数组 = 还没打开面板，不是"区间是空的" */
+  const rewriteTodo = shallowRef<TodoItem[]>([]);
+  /** 区间里每条提交的原始事实（标题、作者、日期）。todo 只存动作，事实查这里 */
+  const rewriteEntries = shallowRef<PlanEntry[]>([]);
+  /** todo 覆盖的区间的底端（`base`）。改写只发生在 base..HEAD 这段连续区间里 */
+  const rewriteBase = ref<string | null>(null);
+  /** 区间有多大。`large` 为真时界面要先告诉用户"会跑一阵子"再让他确认 */
+  const rewriteSize = shallowRef<PlanSize | null>(null);
+  /** 最近一次改写的结果。成功后界面上要一直显示还原 ref */
+  const rewriteReport = shallowRef<RewriteReport | null>(null);
 
   /**
    * 中断态下能做的事只有一件：退回（§3 的 M2 边界）。
@@ -180,6 +203,8 @@ export const useWriteStore = defineStore("write", () => {
     lastBackupRef.value = null;
     syncLines.value = [];
     syncAction.value = null;
+    // todo 里的提交号属于上一个仓库，留着就是一份指向别的仓库的操作清单
+    closeRewrite();
   }
 
   async function loadAll() {
@@ -434,6 +459,82 @@ export const useWriteStore = defineStore("write", () => {
     });
   }
 
+  // ---------------------------------------------------------------- 交互式改写（§7.14）
+
+  /**
+   * 打开改写面板：以 `base` 为底端拉出 todo 初稿（§7.14 只支持从 HEAD 往回的连续区间）。
+   *
+   * todo 的内容归界面管：排序、选动作、改信息都在这里完成，执行时才整份传给 Rust。
+   */
+  async function openRewrite(base: string) {
+    const id = requireId();
+    if (id === null) return null;
+    const head = repos.info?.headCommit;
+    if (!head) return null;
+    try {
+      const [entries, size] = await Promise.all([
+        rewritePlanApi(id, base, head),
+        rewritePlanSizeApi(id, base, head),
+      ]);
+      rewriteBase.value = base;
+      rewriteEntries.value = entries;
+      rewriteTodo.value = entries.map((entry: PlanEntry) => ({
+        sha: entry.sha,
+        action: "pick" as const,
+        message: null,
+      }));
+      rewriteSize.value = size;
+      rewriteReport.value = null;
+      return entries;
+    } catch (err) {
+      error.value = wrap(err);
+      return null;
+    }
+  }
+
+  function closeRewrite() {
+    rewriteTodo.value = [];
+    rewriteEntries.value = [];
+    rewriteBase.value = null;
+    rewriteSize.value = null;
+    rewriteReport.value = null;
+  }
+
+  /**
+   * todo 里的非法组合在后端也会被拒，但界面不留这种可能：squash/fixup 打头没有
+   * 可并的对象，跑到一半才失败是最坏的时机（§7.14）。
+   */
+  const rewriteProblem = computed(() => {
+    let hasLeader = false;
+    for (const item of rewriteTodo.value) {
+      if (item.action === "squash" || item.action === "fixup") {
+        if (!hasLeader) return `${shortSha(item.sha)} 要并进前一条，但它前面没有可保留的提交`;
+      }
+      hasLeader = item.action !== "drop" && item.action !== "squash" && item.action !== "fixup";
+    }
+    if (rewriteTodo.value.length === 0) return "区间里没有可改写的提交";
+    if (rewriteTodo.value.every((item) => item.action === "pick")) return null;
+    return null;
+  });
+
+  /** 有没有真正要执行的改动。全是 pick 等于什么也没做，不必给入口 */
+  const rewriteDirty = computed(() => rewriteTodo.value.some((item) => item.action !== "pick"));
+
+  async function runRewrite() {
+    const id = requireId();
+    const base = rewriteBase.value;
+    if (id === null || base === null) return null;
+    const report = await run(async () => {
+      const [outcome, detail] = await rewriteRunApi(id, base, rewriteTodo.value, expectedHead());
+      lastBackupRef.value = outcome.backupRef;
+      rewriteReport.value = detail;
+      return detail;
+    });
+    // 成功之后 todo 就过期了：区间里的提交号全变了，留在面板上会诱导用户再跑一次
+    if (report) closeRewrite();
+    return report;
+  }
+
   // ---------------------------------------------------------------- 日志与撤销
 
   async function undo() {
@@ -458,6 +559,16 @@ export const useWriteStore = defineStore("write", () => {
     deletable,
     syncLines,
     syncAction,
+    rewriteTodo,
+    rewriteEntries,
+    rewriteBase,
+    rewriteSize,
+    rewriteReport,
+    rewriteProblem,
+    rewriteDirty,
+    openRewrite,
+    closeRewrite,
+    runRewrite,
     loadAll,
     loadStashes,
     loadJournal,

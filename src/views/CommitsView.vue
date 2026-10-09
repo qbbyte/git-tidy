@@ -228,6 +228,12 @@ const menuOptions = computed<DropdownOption[]>(() => {
       ],
     },
     { type: "divider", key: "divider-1" },
+    {
+      // 改写区间是「这条之后到 HEAD」，含不含这条由面板里的 todo 决定
+      label: "从这里开始改写",
+      key: "rewrite",
+      disabled: !writable || commit.id === repos.info?.headCommit,
+    },
     { label: "复制 sha", key: "copy-sha" },
     { label: "复制标题", key: "copy-subject" },
   ];
@@ -253,6 +259,10 @@ function onMenuSelect(key: string) {
   }
   if (key === "copy-subject") {
     void copyText(commit.subject, "标题");
+    return;
+  }
+  if (key === "rewrite") {
+    void writes.openRewrite(commit.id);
     return;
   }
 

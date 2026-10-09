@@ -12,6 +12,7 @@ pub mod process;
 pub mod refs;
 pub mod repo;
 pub mod reset;
+pub mod rewrite;
 pub mod stash;
 pub mod status;
 pub mod sync;

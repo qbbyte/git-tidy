@@ -7,6 +7,7 @@ use crate::error::GitError;
 use crate::git::branch::{self, Deletable};
 use crate::git::conflict::{self, Conflict};
 use crate::git::reset::{self, ResetMode};
+use crate::git::rewrite;
 use crate::git::stash::{self, StashEntry};
 use crate::git::status::{self, HunkSelection, PartialSupport, WorkingFile};
 use crate::git::sync::{self, PullStrategy, SyncReport};
@@ -594,6 +595,103 @@ pub async fn remote_delete_branch(
     })
     .await
     .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+// ---------------------------------------------------------------- 交互式改写（§7.14）
+
+/// 改写 todo 的初稿：`base..head` 区间里的每条提交。
+///
+/// 读操作，不进 write_guard：它不改变任何东西。todo 本身由界面给回 `rewrite_run`——
+/// 排顺序、选动作、改信息都在界面上做，这里只负责把原始事实摆出来。
+#[tauri::command]
+pub async fn rewrite_plan(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    base: String,
+    head: String,
+) -> Result<Vec<rewrite::PlanEntry>, GitError> {
+    let path = worktree(state.inner(), id).await?;
+    tauri::async_runtime::spawn_blocking(move || rewrite::plan(&path, &base, &head))
+        .await
+        .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 执行 todo。改写是本项目风险最高的写操作，六步一步不少（§4）。
+///
+/// tree 校验按 todo 的内容决定：有 `drop` 就**不能**要求 tree 一致——丢掉一条提交
+/// 本来就会改内容，还要它一致就等于把这个功能禁用掉。除此之外（重排 / 压缩 / 改信息）
+/// tree 必须与改写前逐字节相同，那正是判断改写有没有顺手改掉内容的唯一依据。
+#[tauri::command]
+pub async fn rewrite_run(
+    app: AppHandle,
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    base: String,
+    todo: Vec<rewrite::TodoItem>,
+    expected_head: Option<String>,
+) -> Result<(Outcome, rewrite::RewriteReport), GitError> {
+    let db = state.inner().clone();
+    let path = worktree(&db, id).await?;
+
+    let drops = todo.iter().any(|item| item.action.changes_tree());
+    let mut opts = if drops { Opts::clean() } else { Opts::rewriting() };
+    opts = opts
+        .at(expected_head.clone())
+        .affecting(Some(base.clone()), expected_head);
+    let action = "rewrite";
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut captured: Option<rewrite::RewriteReport> = None;
+        let mut body = |path: &Path| -> Result<(), GitError> {
+            // 这两个值必须在 body 里现读：guard 已经建好还原点，但它不把执行前的
+            // HEAD / 分支交给 body，而 `promote` 的乐观锁就靠它们
+            let old_head = guard::head_sha(path)?
+                .ok_or_else(|| GitError::DetachedHead {
+                    detail: "仓库还没有任何提交".into(),
+                })?;
+            let branch = guard::current_branch(path)?.ok_or_else(|| GitError::DetachedHead {
+                detail: "先把这次改写落在某个分支上再试".into(),
+            })?;
+
+            let report = rewrite::run(path, &base, &old_head, &todo, &mut |line| {
+                emit(&app, id, action, line)
+            })?;
+            rewrite::promote(path, &branch, &old_head, &report.new_head, &report.temp_branch)?;
+            captured = Some(report);
+            Ok(())
+        };
+        let outcome = guard::run(&db, opts.into_request(id, path.clone(), action), &mut || {
+            body(&path)
+        })?;
+        Ok((outcome, captured.expect("body 跑过就一定有结果")))
+    })
+    .await
+    .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 区间里有多少条提交。超过 `LARGE_TODO` 时界面先提示分段再让人确认：
+/// 改写是每条一次进程，两百条就是两百个子进程，用户要有心理准备。
+#[tauri::command]
+pub async fn rewrite_plan_size(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    base: String,
+    head: String,
+) -> Result<PlanSize, GitError> {
+    let path = worktree(state.inner(), id).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let count = rewrite::plan(&path, &base, &head)?.len();
+        Ok(PlanSize { count, large: count >= rewrite::LARGE_TODO })
+    })
+    .await
+    .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanSize {
+    pub count: usize,
+    pub large: bool,
 }
 
 // ---------------------------------------------------------------- 暂存（§7.8）

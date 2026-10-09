@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { NButton, NCollapse, NCollapseItem, NDropdown, NEmpty, NInput, NSpace, type DropdownOption } from "naive-ui";
 import RefPanel from "@/components/RefPanel.vue";
+import RewritePanel from "@/components/RewritePanel.vue";
 import StashPanel from "@/components/StashPanel.vue";
 import OpJournal from "@/components/OpJournal.vue";
 import ConflictResolver from "@/components/ConflictResolver.vue";
@@ -398,6 +399,15 @@ watch(
 
     <div v-if="repos.canCommit" class="block">
       <stash-panel />
+    </div>
+
+    <!--
+      改写面板（§7.14）只在 todo 非空时占地方：它由提交列表里的「从这里开始改写」打开，
+      关掉之后侧栅就恢复原样。放这里是因为它的操作对象是整个区间，
+      而区间不绑定于任何一条选中的提交。
+    -->
+    <div v-if="writes.rewriteTodo.length" class="block">
+      <rewrite-panel />
     </div>
 
     <div v-if="repos.currentId !== null" class="block">
