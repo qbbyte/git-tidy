@@ -1,24 +1,52 @@
 # git-tidy
 
+> 一个用 **Tauri v2 + Vue 3 + Rust** 编写的 Git 桌面客户端，把「通用历史浏览与仓库操作」和「提交规范治理闭环」放进同一个进程。
+
 [![CI](https://github.com/qbbyte/git-tidy/actions/workflows/ci.yml/badge.svg)](https://github.com/qbbyte/git-tidy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/qbbyte/git-tidy/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](https://v2.tauri.app)
+[![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB)](https://v2.tauri.app)
+[![Vue](https://img.shields.io/badge/Vue-3.x-42b883)](https://vuejs.org)
 
-git-tidy 是一个用 Tauri v2 + Vue 3 + Rust 写的 Git 桌面客户端。它把两件事放进同一个进程：
+---
 
-1. 通用的历史浏览与仓库操作能力——提交历史、提交图、commit 详情、文件级 diff、blame、文件历史、跨修订文件树、暂存与提交、分支与标签、stash、远端同步、合并冲突解决；
-2. 提交规范治理闭环——规范配置、可视化提交表单、commit-msg hook 安装、符合率报告、就地整改、CHANGELOG 生成。
+> **项目名说明**
+>
+> GitHub 上名为 `git-tidy` 的项目不止本仓库一个，涉及 Git 库的库、CLI 辅助工具、hook 套件都有同名或近名项目。本仓库是一个**桌面应用**，不是可安装的库，也不是 git 别名或 shell 脚本。如果你找的是终端里用的清理脚本，这里不是。
+
+## 目录
+
+- [它解决什么问题](#它解决什么问题)
+- [核心能力](#核心能力)
+  - [历史改写引擎](#历史改写引擎)
+  - [规范治理闭环](#规范治理闭环)
+  - [通用客户端能力](#通用客户端能力)
+  - [合并冲突解决](#合并冲突解决)
+  - [AI 生成提交信息（可选）](#ai-生成提交信息可选)
+- [界面预览](#界面预览)
+- [从源码构建](#从源码构建)
+- [开发与校验](#开发与校验)
+- [架构与代码分层](#架构与代码分层)
+- [安全模型](#安全模型)
+- [贡献](#贡献)
+- [许可证](#许可证)
+
+## 它解决什么问题
+
+git-tidy 把两件事放进同一个进程：
+
+1. **通用的历史浏览与仓库操作能力**——提交历史、提交图、commit 详情、文件级 diff、blame、文件历史、跨修订文件树、暂存与提交、分支与标签、stash、远端同步、合并冲突解决；
+2. **提交规范治理闭环**——规范配置、可视化提交表单、commit-msg hook 安装、符合率报告、就地整改、CHANGELOG 生成。
 
 闭环部分是这个项目的重点。单独看每一环都有替代品：`git-cliff` 能生成 CHANGELOG，Commitizen 能规范化输入，GitButler 的 virtual branches 能做提交级压缩与拖拽；但把「判定不合规 → 就地改写 → 度量结果 → 生成日志」串在同一个工具里、并且在任何改写之前都能看清将要改什么，目前没有现成方案。
 
-## 项目名说明
-
-GitHub 上名为 `git-tidy` 的项目不止本仓库一个，涉及 Git 库的库、CLI 辅助工具、hook 套件都有同名或近名项目。本仓库是一个**桌面应用**，不是可安装的库，也不是 git 别名或 shell 脚本。如果你找的是终端里用的清理脚本，这里不是。
-
 ## 核心能力
 
-### 历史改写
+### 历史改写引擎
 
-- 对 HEAD 往回的**任意连续区间**做 reword / squash / fixup / drop / 重排，区间可以位于历史中部。
+对 HEAD 往回的**任意连续区间**做 reword / squash / fixup / drop / 重排，区间可以位于历史中部。
+
 - 实现上**不使用 `git rebase -i`**。改为自驱引擎：`rev-list --reverse` 生成 todo，在临时分支上按序执行，每一步做 tree 校验，成功后用 `update-ref` 回到原分支。这样做是为了避开 `GIT_SEQUENCE_EDITOR` 需要 git 反向调用客户端、Windows 上要维护单实例互斥进程、崩溃后 todo 状态难以诊断这三类问题。
 - 区间内任一提交被 remote-tracking ref 包含时拒绝执行，除非用户显式确认改写已推送历史，并接受 `--force-with-lease` 的后果。
 - 区间含 merge commit 时拒绝。
@@ -60,48 +88,13 @@ GitHub 上名为 `git-tidy` 的项目不止本仓库一个，涉及 Git 库的�
 
 常驻左栏 + 主区页签（历史 / 文件 / 提交 / 报告 / CHANGELOG / 设置），数字键直达。快捷键面板与按键绑定由 `src/shortcuts.ts` 的同一份数组驱动，文档不会与实现脱节。在终端打开、在资源管理器显示、复制路径均不经 shell 拼接。检查更新只查不装。
 
-## 工程约束
+## 界面预览
 
-这两条约束不随能力面扩大而放松：
-
-- **一切走系统 git CLI**，不重实现 git，不引入 libgit2 绑定。`src-tauri/src/git/process.rs` 是唯一的 git 子进程出口，固定英文 stderr、UTF-8 输出、`core.quotepath=false`、`--no-pager`，Windows 下附加 `CREATE_NO_WINDOW`。
-- **纯本地，不自建服务端**。出网面被显式枚举：clone / fetch / pull / push / 删除远程分支 / LFS 对象拉取（规划中）/ 更新检查（`api.github.com` 单个 URL，仓库坐标由构建期变量 `GIT_TIDY_REPO` 注入）/ AI 端点（可选，默认关闭，由用户在设置中自行填写）。除此之外全部离线可用。不做遥测、不做账号体系、不代理 AI 请求、不缓存送出的 diff。
-
-安全模型上，威胁前提是 WebView 可以调用任意 command 并传入任意路径。因此：所有 git 命令只接受已注册仓库的 id，路径由 Rust 侧解析；写命令必须在 `write_guard` 白名单内登记，未登记的 action 直接拒绝，前端传不了 argv 数组与文件路径；`treeless` 只读仓库在解析路径那一步就拒绝全部写命令，返回 `ReadOnlyRepo`，不靠前端弹窗；高危操作的前置校验、还原点、tree 校验与回滚都在 Rust 侧兜底，确认文案必须包含受影响的 sha 区间与还原 ref。
-
-前端错误一律走结构化的 `{ code, message, detail }`，前端按 `code` 分支，不解析错误文本。
-
-## 当前状态
-
-**开发中，尚无可用发布版本，也没有发布安装包。**
-
-已落地：历史浏览与提交图、提交详情与文件级 diff、blame 与文件历史、跨修订文件树、筛选搜索、暂存与提交、分支与标签、stash、远端同步、冲突解决器、交互式改写、规范配置与提交表单、commit-msg hook 安装、符合率报告、CHANGELOG 生成、设置与偏好层、快捷键与自文档化面板、外部终端与资源管理器入口、diff 语法高亮、检查更新、AI 生成提交信息；CI 覆盖 Windows / Linux / macOS 三平台。
-
-尚未实现：
-
-| 能力 | 说明 |
-|---|---|
-| reflog 浏览与恢复 | 改写后找回旧 HEAD 的兜底入口，当前只能手工执行 git 命令 |
-| GPG 签名状态 | 列表与详情的签名徽标、`commit.gpgsign` 开关 |
-| Git LFS | 未探测 `git lfs`，LFS 指针文件的 diff 走二进制降级视图而非明确报错 |
-| Git Flow | feature / hotfix / release 的命名与收尾流程 |
-| GitHub 通知 | 轮询通知 API 并提示未读讨论 |
-| 主题切换 | 目前只有浅色 token 表 |
-| 下载式自动更新 | 只检查版本，不下载、不替换 |
-| 打包 | `tauri build` 可用，但未产出经过验证的安装包 |
-
-架构与工程约束（write_guard 六步、git 调用硬约束、安全模型、错误模型、性能预算）见 [`docs/DESIGN.md`](docs/DESIGN.md)。
-
-## 技术栈
-
-- 桌面壳：Tauri v2
-- 前端：Vue 3 + TypeScript + Vite，Naive UI，Pinia，vue-router（hash history，适配 Tauri 的 asset 协议）
-- Git 操作：Rust 直接子进程调用本机 `git`
-- 本地存储：rusqlite（bundled SQLite，WAL 模式）
+应用仍在开发中，**尚无可用发布版本**，界面截图将随首个发布版本补充。预览窗口默认尺寸为 1280 × 820（最小 960 × 600），采用 Naive UI 浅色主题。
 
 ## 从源码构建
 
-前置条件：
+### 前置条件
 
 - Rust MSVC 工具链（`stable-x86_64-pc-windows-msvc`）
 - Windows 上需要 Visual Studio 2022 Build Tools 的「使用 C++ 的生成工具」workload，Tauri 在链接阶段依赖 `link.exe`
@@ -110,6 +103,8 @@ GitHub 上名为 `git-tidy` 的项目不止本仓库一个，涉及 Git 库的�
 - Node.js 与 git
 
 开发时使用的版本：rustc 1.96.0 / Node 24.18.0 / git 2.54.0。
+
+### 构建步骤
 
 ```bash
 git clone https://github.com/qbbyte/git-tidy.git
@@ -129,7 +124,11 @@ npm run check:highlight      # diff 语法高亮的「拼回去必须等于原�
 npm run check:ai             # AI 提交信息的 endpoint 归一 / 截断上报 / 解析退化 / type 收敛
 npm run check:tokens         # 设计 token 表
 npm run check:pane           # 面板分隔条
+```
 
+Rust 侧的格式、lint 与测试：
+
+```bash
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
@@ -137,7 +136,7 @@ cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings &
 
 VS Code 用户会自动收到 Volar、tauri-vscode、rust-analyzer 三个扩展推荐。
 
-## 代码分层
+## 架构与代码分层
 
 ```
 src/                     前端
@@ -154,13 +153,25 @@ src-tauri/src/
   error.rs               结构化错误 { code, message, detail }
 ```
 
-## 明确不做
+工程约束（write_guard 六步、git 调用硬约束、安全模型、错误模型、性能预算）的详细文档见 [`docs/DESIGN.md`](docs/DESIGN.md)（编写中）。要点如下：
 
-- 代码托管平台功能：PR / review / issue / commit 评论。GitHub 只做「通知进来」，不做「操作出去」。
-- 代码编辑器：除冲突解决器外不修改工作区文件内容。
-- 内嵌终端：只拉起系统终端。
-- AI 自动提交、自研模型、代理或缓存 AI 请求：生成结果一律由人确认。
+- **一切走系统 git CLI**，不重实现 git，不引入 libgit2 绑定。`src-tauri/src/git/process.rs` 是唯一的 git 子进程出口，固定英文 stderr、UTF-8 输出、`core.quotepath=false`、`--no-pager`，Windows 下附加 `CREATE_NO_WINDOW`。
+- **纯本地，不自建服务端**。出网面被显式枚举：clone / fetch / pull / push / 删除远程分支 / LFS 对象拉取（规划中）/ 更新检查（`api.github.com` 单个 URL，仓库坐标由构建期变量 `GIT_TIDY_REPO` 注入）/ AI 端点（可选，默认关闭，由用户在设置中自行填写）。除此之外全部离线可用。不做遥测、不做账号体系、不代理 AI 请求、不缓存送出的 diff。
+- **错误模型**：前端错误一律走结构化的 `{ code, message, detail }`，前端按 `code` 分支，不解析错误文本。
 
-## 许可
+## 安全模型
 
-MIT，见 [LICENSE](LICENSE)。
+威胁前提是 WebView 可以调用任意 command 并传入任意路径。因此：
+
+- 所有 git 命令只接受已注册仓库的 id，路径由 Rust 侧解析；
+- 写命令必须在 `write_guard` 白名单内登记，未登记的 action 直接拒绝，前端传不了 argv 数组与文件路径；
+- `treeless` 只读仓库在解析路径那一步就拒绝全部写命令，返回 `ReadOnlyRepo`，不靠前端弹窗；
+- 高危操作的前置校验、还原点、tree 校验与回滚都在 Rust 侧兜底，确认文案必须包含受影响的 sha 区间与还原 ref。
+
+## 贡献
+
+项目处于早期开发阶段，欢迎以 Issue 反馈问题、以 PR 提交改动。提交前请先跑通「[开发与校验](#开发与校验)」中的前端与 Rust 校验。涉及架构或工程约束的改动，建议先开 Issue 讨论。
+
+## 许可证
+
+[MIT](LICENSE)。
