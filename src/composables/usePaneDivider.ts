@@ -5,9 +5,9 @@ import { onBeforeUnmount, ref, type Ref } from "vue";
  *
  * 三处共用（历史页、文件页、侧栏），所以持久化与约束只在这里写一次。
  *
- * 存 `localStorage` 而不是需求文档 §7.19 说的 `preferences.json`：
- * 那一层还没实现（全仓 `preferences` 命中 0 次），为存两个数字提前把 M4 的活拉进来
- * 不划算。键名统一带 `git-tidy:` 前缀，将来迁走时按前缀筛出来就行。
+ * 存 `localStorage` 而不是 `preferences.json`：
+ * 那一层现在是实现好的，但它管的是拉取策略与列表列显示这类个人偏好，分栏宽度不算；
+ * 键名统一带 `git-tidy:` 前缀，将来要迁走时按前缀筛出来就行。
  */
 
 /** 存不进去不该拖垮界面：隐私模式与配额满都会抛 */
