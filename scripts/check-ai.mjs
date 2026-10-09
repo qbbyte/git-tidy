@@ -11,7 +11,7 @@ import {
   normalizeType,
   parseCommitMessage,
   redactKey,
-  truncateDiff,
+  shrinkDiff,
   validateConfig,
 } from "../src/lib/ai.ts";
 
@@ -53,12 +53,52 @@ check(
 check("本地 Ollama", normalizeEndpoint("http://localhost:11434/v1"), "http://localhost:11434/v1/chat/completions");
 check("首尾空白", normalizeEndpoint("  https://h/v1  "), "https://h/v1/chat/completions");
 
-// ── 截断：不截断时如实说没截，截断时必须同时报出来 ───────────────────────
+// ── 压缩：没超预算原样送出；超了按文件分配额度，每个文件都必须露头 ─────────
 const small = "x".repeat(100);
-check("短 diff 不截断", truncateDiff(small), { text: small, truncated: false });
-const big = "y".repeat(MAX_DIFF_CHARS + 500);
-const cut = truncateDiff(big);
-check("长 diff 截到上限", [cut.text.length, cut.truncated], [MAX_DIFF_CHARS, true]);
+check("短 diff 原样送出", shrinkDiff(small), {
+  text: small,
+  truncated: false,
+  clippedFiles: 0,
+  foldedFiles: 0,
+  skippedFiles: 0,
+});
+
+/** 造一段像样的 diff：文件头 + 一个 hunk，正文按 marker 生成，方便断言谁被留下 */
+function diffBlock(path, lines, marker = "行") {
+  const body = Array.from({ length: lines }, (_, i) => `+${marker} 内容填充填充填充 ${i}`).join("\n");
+  return [
+    `diff --git a/${path} b/${path}`,
+    "index 1111111..2222222 100644",
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    `@@ -1,0 +1,${lines} @@`,
+    body,
+    "",
+  ].join("\n");
+}
+
+const files = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts"];
+const big = files.map((path) => diffBlock(path, 200)).join("");
+const long = shrinkDiff(big);
+check("超预算时标记压缩", long.truncated, true);
+check("压缩后不超预算", long.text.length <= MAX_DIFF_CHARS, true);
+// 这条是这次改动的核心：旧写法 `slice(0, MAX)` 会把第 3 个文件之后的全丢掉
+check(
+  "每个文件都露头（旧写法只留得下前两个）",
+  files.every((path) => long.text.includes(`b/${path}`)),
+  true,
+);
+check("被切短的正文如实计数", long.clippedFiles > 0, true);
+check("没有文件被整个丢掉", long.skippedFiles, 0);
+
+// 锁文件 / 生成物：正文折叠成统计，但仍要出现在清单里（否则模型不知道依赖也改了）
+const withLock = diffBlock("package-lock.json", 300, "LOCKLINE") + diffBlock("src/app.ts", 300, "APPLINE");
+const shrunk = shrinkDiff(withLock);
+check("锁文件正文被折叠", shrunk.foldedFiles, 1);
+check("锁文件只留统计不给正文", shrunk.text.includes("LOCKLINE"), false);
+check("锁文件仍在清单里", shrunk.text.includes("b/package-lock.json"), true);
+check("普通文件正文保留", shrunk.text.includes("APPLINE"), true);
+check("折叠也算压缩过", shrunk.truncated, true);
 
 // ── 提示词：白名单必须进提示词；截断过必须在提示词里说明 ───────────────────
 const prompt = buildPrompt("diff --git a/x b/x", ["feat", "fix", "chore"]);

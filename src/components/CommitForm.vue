@@ -24,7 +24,7 @@ import {
   type Spec,
 } from "@/api/spec";
 import { requestCommitMessage, stagedDiff } from "@/api/ai";
-import { truncateDiff, type GeneratedCommit } from "@/lib/ai";
+import { shrinkDiff, type GeneratedCommit, type ShrunkDiff } from "@/lib/ai";
 import { usePrefsStore } from "@/stores/prefs";
 
 /**
@@ -152,6 +152,7 @@ function clearDraft() {
   outcome.value = null;
   aiResult.value = null;
   aiError.value = null;
+  aiShrink.value = null;
 }
 
 async function open() {
@@ -208,8 +209,25 @@ async function submit() {
 const aiGenerating = ref(false);
 const aiError = ref<string | null>(null);
 const aiResult = ref<GeneratedCommit | null>(null);
-/** diff 太大被截断过：要在弹窗里说明，否则模型那份描述是基于半张 diff 的 */
-const aiTruncated = ref(false);
+/** diff 超预算被压缩过：要在弹窗里说明，否则模型那份描述是基于半张 diff 的 */
+const aiShrink = ref<ShrunkDiff | null>(null);
+
+/**
+ * 压缩说明。
+ *
+ * 只说"太长了已截断"没有用——用户没法判断这次描述可不可信。所以分开报：
+ * 有多少文件的正文被切短、有多少锁文件/生成物被折叠成统计、有没有文件整个没进去。
+ * 三样都没有时说明虽然超预算但每段都留全了（比如全是锁文件），也如实说。
+ */
+const aiShrinkHint = computed(() => {
+  const result = aiShrink.value;
+  if (!result?.truncated) return "";
+  const parts: string[] = [];
+  if (result.clippedFiles > 0) parts.push(`${result.clippedFiles} 个文件的正文只保留了开头`);
+  if (result.foldedFiles > 0) parts.push(`${result.foldedFiles} 个锁文件 / 生成物只保留了增删统计`);
+  if (result.skippedFiles > 0) parts.push(`${result.skippedFiles} 个文件的 diff 整个没纳入`);
+  return `暂存区 diff 超过预算，已按文件分配额度：${parts.join("，") || "正文已按额度截短"}。每个文件都保留了文件头与增删统计，描述可能漏掉被折叠的细节。`;
+});
 
 const aiConfig = computed(() => prefsStore.prefs?.ai);
 const aiEnabled = computed(() => {
@@ -226,7 +244,7 @@ async function onAiGenerate() {
   aiGenerating.value = true;
   try {
     const diff = await stagedDiff(props.repoId);
-    aiTruncated.value = truncateDiff(diff).truncated;
+    aiShrink.value = shrinkDiff(diff);
     aiResult.value = await requestCommitMessage(config, diff, spec.value.types);
   } catch (err) {
     aiError.value = err instanceof Error ? err.message : String(err);
@@ -399,8 +417,8 @@ onUnmounted(() => release?.());
         <n-alert v-if="aiWillOverwrite" type="info" :bordered="false">
           填入会覆盖当前已写的描述与正文。
         </n-alert>
-        <n-alert v-if="aiTruncated" type="warning" :bordered="false">
-          暂存区 diff 过长，已截断后送给模型；描述只覆盖了截断处之前的内容。
+        <n-alert v-if="aiShrinkHint" type="warning" :bordered="false">
+          {{ aiShrinkHint }}
         </n-alert>
         <n-alert
           v-if="!aiResult.type"
