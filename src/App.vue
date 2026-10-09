@@ -17,6 +17,7 @@ import {
 } from "naive-ui";
 import RepoSidebar from "@/components/RepoSidebar.vue";
 import SettingsModal from "@/components/SettingsModal.vue";
+import AddRepoModal from "@/components/AddRepoModal.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { usePrefsStore as usePrefs } from "@/stores/prefs";
@@ -43,6 +44,8 @@ const router = useRouter();
 const repos = useReposStore();
 const writes = useWriteStore();
 const settingsVisible = ref(false);
+/** 侧栅「添加」按钮的落点：弹窗与设置同一套生命周期，成功后自动关闭 */
+const addRepoVisible = ref(false);
 
 /**
  * 侧栏宽度，像素单位：它是导航，带宽固定比跟着窗口一起长要好。
@@ -235,7 +238,7 @@ function closeError() {
     <n-dialog-provider>
     <n-message-provider>
       <div ref="shell" class="shell" :class="{ resizing: sider.dragging.value }">
-        <repo-sidebar class="sider" :style="{ width: `${sider.size.value}px` }" @open-settings="settingsVisible = true" />
+        <repo-sidebar class="sider" :style="{ width: `${sider.size.value}px` }" @open-settings="settingsVisible = true" @open-add-repo="addRepoVisible = true" />
 
         <div
           class="sider-divider"
@@ -354,6 +357,7 @@ function closeError() {
       </div>
 
       <settings-modal v-model:show="settingsVisible" />
+      <add-repo-modal v-model:show="addRepoVisible" />
     </n-message-provider>
     </n-dialog-provider>
   </n-config-provider>

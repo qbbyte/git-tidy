@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { GitTidyError } from "@/api/client";
 import { openTerminal } from "@/api/prefs";
@@ -10,7 +9,7 @@ import { NIcon } from "naive-ui";
 import Settings from "@vicons/tabler/es/Settings";
 import { provideShell } from "@/shell";
 import { RADIUS_CONTROL } from "@/styles/tokens";
-import { NButton, NCollapse, NCollapseItem, NDropdown, NEmpty, NInput, NSpace, type DropdownOption } from "naive-ui";
+import { NButton, NCollapse, NCollapseItem, NDropdown, NEmpty, NInput, type DropdownOption } from "naive-ui";
 import RefPanel from "@/components/RefPanel.vue";
 import RewritePanel from "@/components/RewritePanel.vue";
 import StashPanel from "@/components/StashPanel.vue";
@@ -31,19 +30,16 @@ const writes = useWriteStore();
 const emit = defineEmits<{
   /** 左下角齿轮被点击时触发，由 App.vue 打开设置弹窗 */
   (e: "open-settings"): void;
+  /** 仓库区的「添加」被点击时触发，由 App.vue 打开添加仓库弹窗 */
+  (e: "open-add-repo"): void;
 }>();
 
 function openSettings() {
   emit("open-settings");
 }
 
-const path = ref("");
-const url = ref("");
-const showUrl = ref(false);
 const editing = ref<{ id: number; name: string } | null>(null);
 const repoQuery = ref("");
-/** 添加表单默认收起：它常驻时占五六行，而大多数时候根本不用添加仓库 */
-const showAdd = ref(false);
 /** 「仓库详情」（路径与 git 版本）默认收起 */
 const showRepoInfo = ref(false);
 /** 当前开着动作菜单的仓库行。菜单靠它控制自身可见 */
@@ -111,35 +107,6 @@ const interruptText = computed(() =>
  * 本仓库的引用列表与它们的写入口都在 `RefPanel` 里：读的那一列常驻几十条，
  * 写入口悬停才露出来（§7.10 的确认强度与 §3 的期边界）。
  */
-
-async function addPath() {
-  const trimmed = path.value.trim();
-  if (!trimmed) return;
-  await repos.add(trimmed);
-  // 失败时把路径留在框里，用户不必重新粘贴
-  if (!repos.error) path.value = "";
-}
-
-async function addUrl() {
-  const trimmed = url.value.trim();
-  if (!trimmed) return;
-  await repos.addByUrl(trimmed);
-  if (!repos.error) {
-    url.value = "";
-    showUrl.value = false;
-  }
-}
-
-// as const 是必须的：options 的字段类型被推宽成 boolean 时，
-// open() 的条件返回类型会退化成 string[] | null
-async function pickDirectory() {
-  const picked = await open(
-    { title: "选择 Git 仓库目录", directory: true, multiple: false } as const,
-  );
-  if (!picked) return;
-  path.value = picked;
-  await addPath();
-}
 
 function startRename(repo: Repo) {
   editing.value = { id: repo.id, name: repo.name };
@@ -329,49 +296,12 @@ watch(
     <div class="section">
       <div class="section-title">
         仓库
-        <button class="section-action" type="button" @click="showAdd = !showAdd">
-          {{ showAdd ? "收起" : "添加" }}
-        </button>
-      </div>
-
-      <!--
-        添加表单按需展开：路径输入框 + 三个按钮 + URL 区常年占着五六行，
-        而大多数时候根本不用添加仓库。
-      -->
-      <div v-if="showAdd" class="add">
-        <n-input
-          v-model:value="path"
-          size="small"
-          placeholder="本地仓库目录 D:\project\demo"
-          @keyup.enter="addPath"
-        />
-        <n-space size="small">
-          <n-button
-            size="small"
-            type="primary"
-            :loading="busy"
-            :disabled="!path.trim()"
-            @click="addPath"
-          >
-            添加目录
-          </n-button>
-          <n-button size="small" :disabled="busy" @click="pickDirectory">浏览…</n-button>
-          <n-button size="small" quaternary @click="showUrl = !showUrl">按地址</n-button>
-        </n-space>
-        <template v-if="showUrl">
-          <n-input
-            v-model:value="url"
-            size="small"
-            placeholder="https://… 或 git@host:org/repo.git"
-            @keyup.enter="addUrl"
-          />
-          <n-button size="small" :loading="busy" :disabled="!url.trim()" @click="addUrl">
-            只读浏览这个地址
-          </n-button>
-          <div class="hint">
-            地址方式只下载提交对象，不建工作区：能读提交列表，不能暂存、不能提交。想要完整能力就添加之后点「克隆」。
-          </div>
-        </template>
+        <!--
+          「添加」打开的是弹窗（AddRepoModal），侧栏里不再展开表单：
+          目录与地址两种入口互斥，展开在一条窄栏里既挤又要点两次才走得完，
+          而它一年也点不到几次——弹窗正好有地方把话说清楚。
+        -->
+        <button class="section-action" type="button" @click="emit('open-add-repo')">添加</button>
       </div>
 
       <n-input
@@ -730,12 +660,6 @@ watch(
 
 .section-action:hover {
   text-decoration: underline;
-}
-
-.add {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
 
 .block {
