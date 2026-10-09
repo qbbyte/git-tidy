@@ -16,6 +16,11 @@ export interface Commit {
   head: boolean;
   /** 指向这一条的分支 / 远程跟踪分支 / 标签 */
   refs: RefBadge[];
+  /**
+   * 还没推出去：可达自 HEAD、但不在当前分支上游里（`@{upstream}..HEAD`）。
+   * 图列据此把「传出的更改」画成另一种颜色。没有上游、或视图不是 HEAD 时不存在/false。
+   */
+  unpushed?: boolean;
   /** Summary 在 Rust 侧是 serde(flatten)，到 JSON 里是平铺的三个字段 */
   commitType: string | null;
   scope: string | null;

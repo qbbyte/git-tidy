@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,10 @@ pub struct Commit {
     pub head: bool,
     /// 指向这一条的分支 / 远程跟踪分支 / 标签
     pub refs: Vec<Badge>,
+    /// 这一条**还没推出去**：可达自 HEAD、但不在当前分支上游里（`@{upstream}..HEAD`）。
+    /// 图列据此把「传出的更改」画成另一种颜色。没有上游、或视图不是 HEAD 时恒为 false。
+    #[serde(default)]
+    pub unpushed: bool,
     /// Conventional Commits 的语法拆解结果，列表按 type 染色就靠它
     #[serde(flatten)]
     pub summary: message::Summary,
@@ -160,7 +165,8 @@ pub fn list(
     let revision = filter.rev.clone().unwrap_or_else(|| "HEAD".to_string());
 
     if !filter.needs_post_filter() {
-        let commits = log_window(repo, filter, &revision, skip, limit)?;
+        let mut commits = log_window(repo, filter, &revision, skip, limit)?;
+        mark_unpushed(repo, filter, &mut commits);
         return Ok(CommitPage {
             commits,
             total,
@@ -202,11 +208,45 @@ pub fn list(
         }
     }
 
+    mark_unpushed(repo, filter, &mut page);
+
     Ok(CommitPage {
         commits: page,
         total,
         truncated,
     })
+}
+
+/// 标出「传出的更改」：`@{upstream}..HEAD` 里的提交就是本地还没推出去的。
+///
+/// **只在看 HEAD 的历史时标**（`filter.rev` 为空）。指定的 rev 是别的分支，拿「当前分支」
+/// 的上游去判定它没有意义，那时一个都不标。
+///
+/// 没有上游时 git 会以非零退出——那是需要区分的正常状态，不是错误：无从判断就当没有
+/// 未推送提交，不标色也不报错。命令挂在 HEAD 上，所以改动 push/pull/切分支之后
+/// 下一次进页面自然会重算，不需要谁去失效。
+fn mark_unpushed(repo: &Path, filter: &Filter, commits: &mut [Commit]) {
+    if filter.rev.is_some() {
+        return;
+    }
+    let Ok(out) = process::run(Some(repo), &["rev-list", "@{upstream}..HEAD"]) else {
+        return;
+    };
+    if !out.success {
+        return;
+    }
+    let ahead: HashSet<&str> = out
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if ahead.is_empty() {
+        return;
+    }
+    for commit in commits.iter_mut() {
+        commit.unpushed = ahead.contains(commit.id.as_str());
+    }
 }
 
 /// 筛选态下的可见集合，交给图算泳道（§7.7）。
@@ -484,6 +524,7 @@ fn parse_commit(record: &str) -> Result<Commit, GitError> {
         parents: parts[4].split_whitespace().map(str::to_string).collect(),
         head,
         refs: badges,
+        unpushed: false,
         subject,
         body,
         summary,
