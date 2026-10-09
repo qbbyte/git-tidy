@@ -4,6 +4,7 @@ import { NButton, NCheckbox, NEmpty, NTag } from "naive-ui";
 import CommitForm from "@/components/CommitForm.vue";
 import HookPanel from "@/components/HookPanel.vue";
 import PartialStage from "@/components/PartialStage.vue";
+import SyncPanel from "@/components/SyncPanel.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import type { WorkingFile } from "@/api/status";
@@ -136,6 +137,8 @@ function toggleExpand(file: WorkingFile) {
         :locked="repos.interrupted"
         @committed="repos.refreshAll()"
       />
+      <!-- 提交与推送是连着的两步：提交完 `ahead` 一变，这里立刻显示「↑ N 待推送」 -->
+      <sync-panel />
       <hook-panel :repo-id="repoId" />
     </div>
   </div>

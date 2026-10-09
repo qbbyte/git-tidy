@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   NAlert,
@@ -16,9 +16,10 @@ import {
   type GlobalThemeOverrides,
 } from "naive-ui";
 import RepoSidebar from "@/components/RepoSidebar.vue";
-import RefPanel from "@/components/RefPanel.vue";
+import RefsModal from "@/components/RefsModal.vue";
 import SettingsModal from "@/components/SettingsModal.vue";
 import AddRepoModal from "@/components/AddRepoModal.vue";
+import NewBranchModal from "@/components/NewBranchModal.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { usePrefsStore as usePrefs } from "@/stores/prefs";
@@ -47,6 +48,15 @@ const writes = useWriteStore();
 const settingsVisible = ref(false);
 /** 侧栅「添加」按钮的落点：弹窗与设置同一套生命周期，成功后自动关闭 */
 const addRepoVisible = ref(false);
+/** 页头工具条上的「新建分支」弹窗。从引用栏搬出来的：栏内折两行，且它不该常驻 */
+const newBranchVisible = ref(false);
+/** 切到只读仓库时把这个弹窗收掉：它里面每个动作都会被写权限挡掉 */
+watch(
+  () => repos.canCommit,
+  (value) => {
+    if (!value) newBranchVisible.value = false;
+  },
+);
 
 /**
  * 侧栏宽度，像素单位：它是导航，带宽固定比跟着窗口一起长要好。
@@ -64,51 +74,14 @@ const sider = usePaneDivider({
 });
 
 /**
- * 右侧引用栏（分支 / 远程 / 标签）的宽度。
+ * 引用弹窗（分支 / 远程 / 标签）是否打开。
  *
- * 像素单位，理由同侧栏：它是一份清单，跟着窗口一起长会喧宾夺主。
- * 下限 240 是为了让「新建分支」那一排（前缀按钮 + 名字 + 起点 + 建并切换）不用折成三行；
- * 上限与左栏一样是 420——两边都是导航，谁也不该把中间的内容挤没。
+ * 它原来是主区右侧的第三栏：一条可拖宽的常驻 aside。窗口逻辑宽只有 ~1030px，
+ * 展开那一栏后主区被挤到 400px 上下、历史列表只剩 ~160px；而分支与标签都属于
+ * "要用时才看"的东西，不值得常驻一份宽度。改成弹窗后一分宽度不占，入口仍是
+ * 页头右端的「引用 N」，计数摆在按钮上，不开也知道里面有多少。
  */
-const refsPane = usePaneDivider({
-  container: shell,
-  storageKey: "git-tidy:refs-pane:width",
-  fallback: 320,
-  min: 240,
-  max: 420,
-  unit: "px",
-});
-
-/**
- * 引用栏是否展开。
- *
- * 默认收起：它是窗口里的第三栏，开着就必然挤掉列表与 diff 的宽度，
- * 而分支/标签都属于"要用时才看"。开关放在页头右端的「引用 N」上，计数让人不用展开也知道里面有多少。
- * 选择记在 localStorage，下次照上次的来——与分栏宽度同一套理由（见 usePaneDivider 的注释）。
- */
-const REFS_PANE_KEY = "git-tidy:refs-pane:open";
-
-function readRefsOpen(): boolean {
-  // 读不到（首次打开 / 隐私模式抛错）按收起：宁少一栏
-  try {
-    return localStorage.getItem(REFS_PANE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-const refsOpen = ref(readRefsOpen());
-/** 只读浏览的仓库没有写权限，引用栏里全是写入口，干脆整栏不给 */
-const refsPaneVisible = computed(() => refsOpen.value && repos.canCommit);
-
-function toggleRefs() {
-  refsOpen.value = !refsOpen.value;
-  try {
-    localStorage.setItem(REFS_PANE_KEY, refsOpen.value ? "1" : "0");
-  } catch {
-    // 存不下只是下次开窗口回到默认收起
-  }
-}
+const refsVisible = ref(false);
 
 /**
  * 每种中断态的出口。这一批只给文字指引，等 M2/M3 有「继续 / 中止」按钮再换成按钮。
@@ -318,18 +291,19 @@ function closeError() {
             <span class="headline" :title="headline">{{ headline }}</span>
 
             <!--
-              引用栏的开关。分支 / 远程 / 标签原来挤在左栏的折叠区里，
-              而那里只有两百多像素宽，新建分支表单要折三行、STASH 还被顶出屏幕。
-              计数在这里就能看，不用展开。
+              引用（分支 / 远程 / 标签）开的是弹窗，不再是右侧的第三栏。
+              它原来是页头这一排的第二个按钮，和「新建分支」并排——两个都跟分支有关，
+              看着像两套入口干同一件事，而且展开那一栏会把主区挤到 400px。
+              现在只留这一个入口：引用列表与「新建分支」（在列表的「分支 N」标题上）同处一个弹窗。
+              计数摆在按钮上，不开也知道里面有多少。
             -->
             <n-button
-              class="refs-toggle"
+              class="bar-actions"
               size="small"
               quaternary
-              :type="refsOpen ? 'primary' : 'default'"
               :disabled="!repos.canCommit"
-              :title="repos.canCommit ? '分支 / 远程 / 标签' : '只读浏览的仓库没有写权限，引用栏里的动作都用不了'"
-              @click="toggleRefs"
+              :title="repos.canCommit ? '分支 / 远程 / 标签' : '只读浏览的仓库没有写权限，引用里的动作都用不了'"
+              @click="refsVisible = true"
             >
               引用 {{ repos.refs.length }}
             </n-button>
@@ -420,43 +394,16 @@ function closeError() {
           </div>
         </section>
 
-        <!--
-          引用栏：分支 / 远程 / 标签，从左侧栏整体搬过来。
-
-          为什么搬：这三块全是写入口（建分支、切分支、抓取/拉取/推送、打标签），
-          在两百多像素宽的侧栅里只能折行堆放——新建分支那一排被挤成三行，
-          整块还不分高度地往下长，把 STASH 和写操作日志顶出屏幕。
-          放右侧是按需展开的第三栏：关着时一分宽度不占，开着时表单有一整栏的对齐空间。
-
-          只在有写权限的仓库上出现（refsPaneVisible）——引用栏里全是写入口。
-        -->
-        <template v-if="refsPaneVisible">
-          <div
-            class="sider-divider"
-            role="separator"
-            aria-orientation="vertical"
-            :aria-valuenow="Math.round(refsPane.size.value)"
-            title="拖动调宽窄，双击恢复默认"
-            @pointerdown="refsPane.onPointerDown"
-            @dblclick="refsPane.reset"
-          />
-
-          <aside class="refs-pane" :style="{ width: `${refsPane.size.value}px` }">
-            <header class="refs-bar">
-              <span class="refs-title">引用 {{ repos.refs.length }}</span>
-              <button class="refs-close" type="button" title="收起引用栏" @click="toggleRefs">
-                ×
-              </button>
-            </header>
-            <div class="refs-body">
-              <ref-panel />
-            </div>
-          </aside>
-        </template>
       </div>
 
+      <!--
+        弹窗统一挂在 App 这一层：内容组件（RefPanel）自己不嵌套弹窗，
+        只用事件往上报，免得弹窗里再套弹窗、层级和关闭顺序纠缠不清。
+      -->
       <settings-modal v-model:show="settingsVisible" />
       <add-repo-modal v-model:show="addRepoVisible" />
+      <refs-modal v-model:show="refsVisible" @new-branch="newBranchVisible = true" />
+      <new-branch-modal v-model:show="newBranchVisible" />
     </n-message-provider>
     </n-dialog-provider>
   </n-config-provider>
@@ -507,71 +454,10 @@ function closeError() {
   min-width: 0;
 }
 
-/* 引用栏的开关钉在页头右端：页签左对齐之后，右端本来是空的 */
-.refs-toggle {
+/* 页头右端的动作组：页签左对齐之后，右端本来是空的，把工具按钮推过去 */
+.bar-actions {
   flex: none;
   margin-left: auto;
-}
-
-/*
- * 右侧引用栏。表面色与左栏同一支，只是接缝反过来——两栏夹着主区，
- * 一眼能看出"两边是导航、中间是内容"。
- */
-.refs-pane {
-  display: flex;
-  flex-direction: column;
-  flex: none;
-  min-width: 0;
-  border-left: 1px solid var(--border);
-  background: var(--surface-app);
-}
-
-.refs-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  padding: 7px 8px 7px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.refs-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.refs-close {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 5px;
-  background: none;
-  color: var(--text-3);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.refs-close:hover {
-  background: var(--surface-hover);
-  color: var(--text-1);
-}
-
-/* 内容自己滚：分支几百条的仓库是常态，不给整栏跟着长 */
-.refs-body {
-  flex: 1;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 12px 14px 16px;
 }
 
 .bar {
