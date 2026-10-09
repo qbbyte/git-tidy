@@ -11,6 +11,7 @@ import {
   NTag,
 } from "naive-ui";
 import { GitTidyError } from "@/api/client";
+import { provideShell } from "@/shell";
 import {
   commitCreate,
   commitScopes,
@@ -192,6 +193,20 @@ onMounted(open);
 onUnmounted(() => {
   if (timer !== undefined) clearTimeout(timer);
 });
+
+/**
+ * Ctrl+Enter 提交（需求 7.23）与按钮、回车走的是同一个 `submit`。
+ *
+ * 写在这里而不是只写在 App.vue：能不能提交取决于本地草稿判定（`canSubmit`），
+ * 外壳拿不到这个状态，硬接就变成“绕过表单校验直接提交”。
+ */
+let release: (() => void) | undefined;
+onMounted(() => {
+  release = provideShell("submit", () => {
+    void submit();
+  });
+});
+onUnmounted(() => release?.());
 </script>
 
 <template>

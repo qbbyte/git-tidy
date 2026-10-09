@@ -50,6 +50,7 @@ import {
   type WriteOpEntry,
 } from "@/api/write";
 import { useReposStore } from "@/stores/repos";
+import { usePrefsStore } from "@/stores/prefs";
 
 function wrap(err: unknown): GitTidyError {
   return err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
@@ -69,6 +70,8 @@ function shortSha(sha: string): string {
  * - 写操作日志与撤销跟写操作一起刷新——"撤销上一步"必须在操作之后立刻可用。
  */
 export const useWriteStore = defineStore("write", () => {
+  /** 拉取策略的默认值来自个人偏好，所以这个 store 也读偏好 */
+  const prefsStore = usePrefsStore();
   const repos = useReposStore();
 
   const busy = ref(false);
@@ -402,16 +405,21 @@ export const useWriteStore = defineStore("write", () => {
     }
   }
 
+  /**
+   * 拉取。`strategy` 不传就用个人偏好里的拉取策略（设置页可改，默认只快进）。
+   * 界面上仍然可以临时换一次——所以“默认”与“本次”得分得开，不能写成同一个字段。
+   */
   async function pull(
     remote: string | null = null,
-    strategy: "ff_only" | "rebase" = "ff_only",
+    strategy?: "ff_only" | "rebase" | "merge",
   ) {
     const id = requireId();
     if (id === null) return null;
+    const chosen = strategy ?? prefsStore.prefs?.pullStrategy ?? "ff_only";
     syncLines.value = [];
     syncAction.value = "pull";
     try {
-      const outcome = await run(() => remotePull(id, remote, strategy, expectedHead()));
+      const outcome = await run(() => remotePull(id, remote, chosen, expectedHead()));
       return outcome;
     } finally {
       syncAction.value = null;

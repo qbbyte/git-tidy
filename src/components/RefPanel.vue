@@ -11,6 +11,7 @@ import {
 } from "naive-ui";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
+import { usePrefsStore } from "@/stores/prefs";
 import type { Ref } from "@/api/refs";
 
 /**
@@ -25,6 +26,15 @@ import type { Ref } from "@/api/refs";
  */
 const repos = useReposStore();
 const writes = useWriteStore();
+const prefsStore = usePrefsStore();
+
+/** Git Flow 的三类分支（需求 7.16：自组合，不依赖系统里装了 git-flow） */
+const FLOW_KINDS = ["feature", "hotfix", "release"] as const;
+type FlowKind = (typeof FLOW_KINDS)[number];
+
+function flowPrefix(kind: FlowKind): string {
+  return prefsStore.prefs?.flowPrefixes[kind] ?? "";
+}
 
 const branches = computed(() => repos.refs.filter((item) => item.kind === "branch"));
 const remoteBranches = computed(() => repos.refs.filter((item) => item.kind === "remote"));
@@ -273,6 +283,22 @@ function shortSha(sha: string) {
     </n-popconfirm>
 
     <n-space size="small" align="center">
+      <!--
+        Git Flow 的三个前缀来自个人偏好（设置页可改）。这里只做“填名字”不做自动建分支：
+        名字后面还要接用户自己写的内容，自动建会多出一堆 `feature/feature-x`。
+      -->
+      <n-space size="small" :wrap="false">
+        <n-button
+          v-for="flow in FLOW_KINDS"
+          :key="flow"
+          size="small"
+          quaternary
+          :disabled="!canWrite()"
+          @click="newBranch = flowPrefix(flow)"
+        >
+          {{ flowPrefix(flow) || flow }}
+        </n-button>
+      </n-space>
       <n-input
         v-model:value="newBranch"
         size="small"

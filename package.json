@@ -10,6 +10,7 @@
     "check:conflict-real": "powershell -ExecutionPolicy Bypass -File scripts/verify-conflict.ps1",
     "check:tokens": "node --experimental-strip-types scripts/check-tokens.mjs",
     "check:pane": "node --experimental-strip-types scripts/check-pane-divider.mjs",
+    "check:highlight": "node --experimental-strip-types scripts/check-highlight.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -17,6 +18,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.8.1",
     "@tauri-apps/plugin-opener": "^2",
+    "@vicons/tabler": "^0.13.0",
     "@vueuse/core": "^15.0.0",
     "dayjs": "^1.11.23",
     "naive-ui": "^2.45.3",

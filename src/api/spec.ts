@@ -53,6 +53,46 @@ export interface Draft {
   footer: string;
 }
 
+/** 与 Rust 侧 git/hook.rs 的 HookState 一一对应（snake_case）。 */
+export type HookState = "missing" | "installed" | "foreign";
+
+export interface HookStatus {
+  hookPath: string;
+  state: HookState;
+  /** `core.hooksPath` 原值；配了就是“这个位置被别的工具占着” */
+  hooksPath: string | null;
+  specSource: SpecSource;
+  /** 已装脚本里的规则快照是否还等于当前规范（false = 规范改过，该更新） */
+  ruleSnapshotCurrent: boolean;
+}
+
+/** installed=false 表示没写任何文件：message 是拒绝理由，suggestion 是共存方案。 */
+export interface HookInstall {
+  installed: boolean;
+  hookPath: string;
+  message: string;
+  suggestion: string | null;
+  backup: string | null;
+  status: HookStatus;
+}
+
+export function hookStatus(id: number) {
+  return call<HookStatus>("hook_status", { id });
+}
+
+export function hookInstall(id: number, force = false) {
+  return call<HookInstall>("hook_install", { id, force });
+}
+
+export function hookUninstall(id: number) {
+  return call<HookInstall>("hook_uninstall", { id });
+}
+
+/** 将要写入磁盘的那份脚本原文：界面用它做「查看规则快照」与共存时的复制内容。 */
+export function hookScript(id: number) {
+  return call<string>("hook_script", { id });
+}
+
 export function specFor(id: number) {
   return call<Spec>("spec_for", { id });
 }

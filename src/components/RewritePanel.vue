@@ -327,7 +327,10 @@ function confirmExecute() {
   display: flex;
   flex-direction: column;
   font-size: 11px;
-  font-family: var(--font-mono, monospace);
+  /* 用等宽字体（tokens.ts 里的 FONT_MONO 那一档），不走自定义属性：
+     `--font-mono` 不是颜色 token，check:tokens 会报它；而带兜底值的自定义属性
+     正是会静默失效的那种写法 */
+  font-family: Consolas, "Courier New", monospace;
   opacity: 0.75;
   max-height: 76px;
   overflow: hidden;

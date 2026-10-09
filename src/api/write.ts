@@ -225,7 +225,7 @@ export function remoteFetch(repoId: number, remote: string | null) {
 export function remotePull(
   repoId: number,
   remote: string | null,
-  strategy: "ff_only" | "rebase",
+  strategy: "ff_only" | "rebase" | "merge",
   expectedHead: string | null,
 ) {
   return call<Outcome>("remote_pull", { id: repoId, remote, strategy, expectedHead });

@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { NAlert, NButton, NEmpty, NRadioButton, NRadioGroup, NSpin } from "naive-ui";
 import { formatBytes, formatDelta } from "@/format";
 import { GitTidyError } from "@/api/client";
+import { LANG_LABEL, detectLang, highlightCached } from "@/lib/highlight";
 import type { Diff, Hunk, Line, LineKind, Blob as ImageBlob } from "@/api/detail";
 
 /**
@@ -328,6 +329,22 @@ const stats = computed(() => {
   const sizes = formatDelta(oldSize.value, newSize.value);
   return sizes === "" ? "" : `｜${sizes}`;
 });
+
+/**
+ * 语法高亮（需求 7.23）。
+ *
+ * 默认开着，也可以关：**高亮只是观感**，用户眼睛累或者觉得某语言认错了，
+ * 关掉它不应该损失任何信息（`highlight` 保证拼回去就是原文）。
+ * 开关跟着当前文件走——换文件就换回该文件语言认出来的那一档，不跨文件记忆。
+ */
+const highlightOn = ref(true);
+const lang = computed(() => detectLang(filePath.value));
+const langSupported = computed(() => lang.value !== "text" && lang.value !== "md");
+
+/** 分词结果按“片段 + 语言”缓存，大 diff 展开时不重复跑正则 */
+function tokensOf(text: string) {
+  return highlightOn.value && langSupported.value ? highlightCached(text, lang.value) : null;
+}
 </script>
 
 <template>
@@ -455,6 +472,16 @@ const stats = computed(() => {
       />
 
       <div v-else class="body">
+        <!-- 高亮开关紧贴正文：它在文件标题旁边才有人会去关 -->
+        <div class="hl-bar">
+          <n-button size="small" quaternary :disabled="!langSupported" @click="highlightOn = !highlightOn">
+            {{ highlightOn && langSupported ? "语法高亮：开" : "语法高亮：关" }}
+          </n-button>
+          <span class="muted">{{ LANG_LABEL[lang] }}</span>
+          <span v-if="!langSupported" class="muted">
+            这个扩展名没有高亮规则（文本与 Markdown 刻意不做：符号一堆，上色只会妨阅读）
+          </span>
+        </div>
         <template v-for="row in rows" :key="row.key">
           <div v-if="row.type === 'hunk'" class="hunk">
             <span class="hunk-range">旧 {{ row.oldRange }}　新 {{ row.newRange }}</span>
@@ -468,7 +495,14 @@ const stats = computed(() => {
                 v-for="(piece, index) in row.pieces"
                 :key="index"
                 :class="{ mark: piece.changed }"
-                >{{ piece.text }}</span
+                ><template v-if="tokensOf(piece.text)"
+                  ><span
+                    v-for="(token, j) in tokensOf(piece.text)"
+                    :key="j"
+                    :class="`tk-${token.kind}`"
+                    >{{ token.text }}</span
+                  ></template
+                ><template v-else>{{ piece.text }}</template></span
               ></span
             >
           </div>
@@ -507,6 +541,47 @@ const stats = computed(() => {
 
 .body {
   font-family: Consolas, "Courier New", monospace;
+}
+
+/**
+ * 语法高亮的开关行。它跟着 diff 正文走而不是页面头部——只有正在看正文的人才会想关它。
+ * 高亮缺失的语言（无规则扩展名）直接禁用开关，而不是给一个按了没反应的按钮。
+ */
+.hl-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/**
+ * 分词配色。颜色全部来自 token 表，不写字面色值。
+ * `mark`（词级改动底色）与这里的 `color` 是两个正交维度：一个是“改了哪一段”，
+ * 一个是“这是什么”，所以两者可以叠加，不会互相覆盖。
+ */
+.tk-comment {
+  color: var(--code-comment);
+}
+
+.tk-string {
+  color: var(--code-string);
+}
+
+.tk-number {
+  color: var(--code-number);
+}
+
+.tk-keyword {
+  color: var(--code-keyword);
+}
+
+.tk-function {
+  color: var(--code-function);
+}
+
+.tk-type {
+  color: var(--code-type);
 }
 
 .hunk {

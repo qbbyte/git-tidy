@@ -25,6 +25,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{ apply: [CommitFilter]; clear: [] }>();
 
+/** Ctrl+F 要聚焦的就是这个关键词框（需求 7.23）。只在脚本里拿到 ref 是不够的：
+ *  外壳在App.vue，按不到组件内部的元素，所以把聚焦动作本身抛出去。 */
+const keywordInput = ref<InstanceType<typeof NInput> | null>(null);
+defineExpose({
+  focusSearch() {
+    keywordInput.value?.focus();
+  },
+});
+
 const rev = ref<string | null>(props.filter.rev ?? null);
 const author = ref<string>(props.filter.authors?.[0] ?? "");
 const keyword = ref<string>(props.filter.grep?.[0] ?? "");
@@ -161,6 +170,7 @@ function clear() {
         @keyup.enter="apply"
       />
       <n-input
+        ref="keywordInput"
         v-model:value="keyword"
         size="small"
         clearable

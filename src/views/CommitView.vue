@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { NButton, NCheckbox, NEmpty, NTag } from "naive-ui";
 import CommitForm from "@/components/CommitForm.vue";
+import HookPanel from "@/components/HookPanel.vue";
 import PartialStage from "@/components/PartialStage.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
@@ -129,12 +130,14 @@ function toggleExpand(file: WorkingFile) {
       </div>
     </section>
 
-    <commit-form
-      class="form"
-      :repo-id="repoId"
-      :locked="repos.interrupted"
-      @committed="repos.refreshAll()"
-    />
+    <div class="form-column">
+      <commit-form
+        :repo-id="repoId"
+        :locked="repos.interrupted"
+        @committed="repos.refreshAll()"
+      />
+      <hook-panel :repo-id="repoId" />
+    </div>
   </div>
 </template>
 
@@ -154,9 +157,14 @@ function toggleExpand(file: WorkingFile) {
   min-width: 0;
 }
 
-.form {
+.form-column {
   flex: none;
   width: 430px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 100%;
+  overflow: auto;
 }
 
 .column-head {

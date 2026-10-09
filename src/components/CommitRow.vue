@@ -28,7 +28,14 @@ const props = defineProps<{
   lanes?: number;
   /** 右边那栏正在显示它 */
   selected?: boolean;
+  /** 个人偏好里的“显示哪些列”。默认全开，且由 store 统一给，不在行内读偏好 */
+  columns?: { refs: boolean; author: boolean; time: boolean; sha: boolean };
 }>();
+
+/** 没给就全显示：省的是眼睛，不是数据 */
+const columns = computed(
+  () => props.columns ?? { refs: true, author: true, time: true, sha: true },
+);
 
 const emit = defineEmits<{ click: []; contextmenu: [event: MouseEvent] }>();
 
@@ -241,7 +248,7 @@ function stubOf() {
         />
       </template>
     </svg>
-    <code class="sha">{{ commit.id.slice(0, 8) }}</code>
+    <code v-if="columns.sha" class="sha">{{ commit.id.slice(0, 8) }}</code>
     <n-tag :type="colorOf()" size="small" :bordered="false" class="type-tag">
       {{ labelOf() }}
     </n-tag>
@@ -249,7 +256,7 @@ function stubOf() {
     <n-tag v-if="commit.breaking" type="error" size="small" :bordered="false">BREAKING</n-tag>
     <n-tag v-if="commit.merge" type="warning" size="small" :bordered="false">merge</n-tag>
     <n-tag v-if="commit.revert" size="small" :bordered="false">revert</n-tag>
-    <div v-if="badges.length || detachedHead" class="refs">
+    <div v-if="columns.refs && (badges.length || detachedHead)" class="refs">
       <span v-if="detachedHead" class="badge current" title="游离 HEAD：当前提交不落在任何分支上">
         HEAD
       </span>
@@ -266,8 +273,10 @@ function stubOf() {
       </span>
     </div>
     <span class="subject" :title="commit.subject">{{ commit.subject }}</span>
-    <span class="author">{{ commit.authorName }}</span>
-    <span class="time">{{ dayjs(commit.time * 1000).format("YYYY-MM-DD HH:mm") }}</span>
+    <span v-if="columns.author" class="author">{{ commit.authorName }}</span>
+    <span v-if="columns.time" class="time">{{
+      dayjs(commit.time * 1000).format("YYYY-MM-DD HH:mm")
+    }}</span>
   </div>
 </template>
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from "vue";
 import { NEmpty, NSpin } from "naive-ui";
+import FileTypeSheet from "@/components/icons/FileTypeSheet.vue";
 import type { TreeEntry } from "@/api/file";
 import { formatBytes } from "@/format";
 
@@ -227,134 +228,10 @@ function isExec(entry: TreeEntry): boolean {
 <template>
   <div class="tree">
     <!--
-      图标形状表：只定义一次，每行用 <use> 引用。
-      用内联 SVG 而不是图标库——这一处不值得为它多背一个依赖。
-      形状一律"一族一个"、互不重样；细笔画 + 按类型上色，比一排实心色块安静。
+      形状表已搬进 FileTypeSheet：那一族自绘记号与页面布局无关，单独立一个组件，
+      标准 UI 字形则走图标库（见该组件里的分工说明）。
     -->
-    <svg class="sheet" aria-hidden="true">
-      <defs>
-        <symbol id="fi-none" viewBox="0 0 16 16">
-          <path
-            d="M4.6 2.4h4.3l2.6 2.6v7.7c0 .5-.4.9-.9.9H4.6c-.5 0-.9-.4-.9-.9V3.3c0-.5.4-.9.9-.9Z"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.15"
-            stroke-linejoin="round"
-          />
-          <path
-            d="M8.9 2.4v2.6h2.6"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.15"
-            stroke-linejoin="round"
-          />
-        </symbol>
-
-        <!-- Vue 的 V：外层实心三角、内层按 evenodd 挖空，不依赖行底色 -->
-        <symbol id="fi-vue" viewBox="0 0 16 16">
-          <path
-            fill="currentColor"
-            fill-rule="evenodd"
-            d="M1.3 3.1h3.5L8 9.5l3.2-6.4h3.5L8 14.1zM4.8 3.1h2.1L8 5.9l1.1-2.8h2.1L8 9.5z"
-          />
-        </symbol>
-
-        <symbol id="fi-markup" viewBox="0 0 16 16">
-          <g
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.35"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M5.7 4.9 2.6 8l3.1 3.1" />
-            <path d="M10.3 4.9 13.4 8l-3.1 3.1" />
-          </g>
-        </symbol>
-
-        <symbol id="fi-data" viewBox="0 0 16 16">
-          <g
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.3"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path
-              d="M6.8 3.7c-1.2 0-1.9.7-1.9 1.9v1.2c0 1.1-.6 1.6-1.6 1.6 1 0 1.6.5 1.6 1.6v1.2c0 1.2.7 1.9 1.9 1.9"
-            />
-            <path
-              d="M9.2 3.7c1.2 0 1.9.7 1.9 1.9v1.2c0 1.1.6 1.6 1.6 1.6-1 0-1.6.5-1.6 1.6v1.2c0 1.2-.7 1.9-1.9 1.9"
-            />
-          </g>
-        </symbol>
-
-        <symbol id="fi-doc" viewBox="0 0 16 16">
-          <path
-            d="M4.1 1.9h4.5l2.9 2.9v8.2c0 .6-.4 1-1 1H4.1c-.6 0-1-.4-1-1V2.9c0-.6.4-1 1-1Z"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.2"
-            stroke-linejoin="round"
-          />
-          <path
-            d="M8.4 1.9v2.9h2.9"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.2"
-            stroke-linejoin="round"
-          />
-          <g fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round">
-            <path d="M5.2 8.5h5.4" />
-            <path d="M5.2 10.7h3.3" />
-          </g>
-        </symbol>
-
-        <symbol id="fi-style" viewBox="0 0 16 16">
-          <g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
-            <path d="M6.3 3.4 5.2 12.6" />
-            <path d="M10.8 3.4 9.7 12.6" />
-            <path d="M3.6 6.2h9" />
-            <path d="M3.1 9.8h9" />
-          </g>
-        </symbol>
-
-        <symbol id="fi-shell" viewBox="0 0 16 16">
-          <g
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.35"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M3.4 4.9 6.5 8l-3.1 3.1" />
-            <path d="M7.9 11.1h4.7" />
-          </g>
-        </symbol>
-
-        <symbol id="fi-image" viewBox="0 0 16 16">
-          <rect
-            x="2.2"
-            y="3.1"
-            width="11.6"
-            height="9.8"
-            rx="1.7"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.2"
-          />
-          <path
-            d="M3.4 11.5 6.5 8.4l1.9 1.9 1.5-1.5 2.7 2.7"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-          <circle cx="6" cy="6.4" r="0.95" fill="currentColor" />
-        </symbol>
-      </defs>
-    </svg>
+    <file-type-sheet />
 
     <div v-if="loading" class="waiting">
       <n-spin size="small" />
@@ -497,12 +374,7 @@ function isExec(entry: TreeEntry): boolean {
   color: var(--text-3);
 }
 
-/* 形状表本身不占位：它只负责提供 symbol，真正渲染的是每行里的那个 .file-icon */
-.sheet {
-  position: absolute;
-  width: 0;
-  height: 0;
-}
+/* 形状表已经搬进 FileTypeSheet：它是一族自绘记号，与页面布局无关 */
 
 .file-icon {
   display: block;

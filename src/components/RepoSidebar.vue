@@ -1,6 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { GitTidyError } from "@/api/client";
+import { openTerminal } from "@/api/prefs";
+import { useRoute, useRouter } from "vue-router";
+import { NIcon } from "naive-ui";
+// 逐个图标路径 import（不是整包）：整包引入会把三千多个图标全打进包里，
+// 而这里只需要这一个。tree-shaking 之后单个图标 1–2 KB。
+import Settings from "@vicons/tabler/es/Settings";
+import { provideShell } from "@/shell";
+import { RADIUS_CONTROL } from "@/styles/tokens";
 import { NButton, NCollapse, NCollapseItem, NDropdown, NEmpty, NInput, NSpace, type DropdownOption } from "naive-ui";
 import RefPanel from "@/components/RefPanel.vue";
 import RewritePanel from "@/components/RewritePanel.vue";
@@ -18,6 +28,15 @@ import type { Repo } from "@/api/repo";
  */
 const repos = useReposStore();
 const writes = useWriteStore();
+const route = useRoute();
+const router = useRouter();
+
+/** 设置页不是页签，是左下角齿轮打开的独立视图，所以它自己管激活态 */
+const settingsOpen = computed(() => route.name === "settings");
+function toggleSettings() {
+  if (settingsOpen.value) router.push({ name: "history" });
+  else router.push({ name: "settings" });
+}
 
 const path = ref("");
 const url = ref("");
@@ -159,6 +178,8 @@ function repoActions(repo: Repo): DropdownOption[] {
     ...(repo.kind === "browse" ? [{ label: "克隆到本地", key: "clone", disabled: busy.value }] : []),
     { label: "重命名", key: "rename" },
     { label: "复制路径", key: "copy-path" },
+    { label: "在资源管理器中显示", key: "reveal" },
+    { label: "在终端中打开", key: "terminal" },
     { type: "divider", key: "divider" },
     { label: "从列表移除", key: "remove" },
   ];
@@ -173,6 +194,28 @@ async function copyRepoPath(repo: Repo) {
   }
 }
 
+/** 在系统文件管理器里定位到这个仓库。走 opener 插件的系统 API，不经过 shell */
+async function revealRepo(repo: Repo) {
+  try {
+    await revealItemInDir(repo.path);
+  } catch (err) {
+    repos.error = new GitTidyError("shell_reveal_failed", String(err));
+  }
+}
+
+/**
+ * 在终端里打开。跨平台没有统一 API，由 Rust 起进程；
+ * 路径在那边是独立参数（优先设成子进程工作目录），不当 shell 代码执行。
+ */
+async function openRepoTerminal(repo: Repo) {
+  try {
+    await openTerminal(repo.id);
+  } catch (err) {
+    repos.error =
+      err instanceof GitTidyError ? err : new GitTidyError("shell_failed", String(err));
+  }
+}
+
 function onRepoAction(repo: Repo, key: string) {
   closeRepoMenu(repo.id);
   if (key === "clone") {
@@ -181,6 +224,10 @@ function onRepoAction(repo: Repo, key: string) {
     startRename(repo);
   } else if (key === "copy-path") {
     void copyRepoPath(repo);
+  } else if (key === "reveal") {
+    void revealRepo(repo);
+  } else if (key === "terminal") {
+    void openRepoTerminal(repo);
   } else if (key === "remove") {
     removeRepo(repo);
   }
@@ -192,12 +239,21 @@ function kindTag(repo: Repo) {
     : { text: "只读", type: "info" as const };
 }
 
+/** Ctrl+Shift+P 的落点。仓库少到不需要搜索框时它是 undefined，调用方自己兜底 */
+const repoSearch = ref<InstanceType<typeof NInput> | null>(null);
+let releaseSwitchRepo: (() => void) | undefined;
+
 onMounted(async () => {
   if (repos.repos.length === 0) await repos.load();
   // 远程命令的进度行可能在 promise 落地前就到了，所以订阅必须先于任何远程动作（§6.7）
   writes.watchProgress();
   if (repos.currentId !== null) await writes.loadAll();
+  releaseSwitchRepo = provideShell("switchRepo", () => {
+    if (repoSearch.value) repoSearch.value.focus();
+    else repoQuery.value = "";
+  });
 });
+onBeforeUnmount(() => releaseSwitchRepo?.());
 
 /** 换仓库时 stash、日志、还原点都要跟着换：它们都是按仓库存的 */
 watch(
@@ -321,6 +377,7 @@ watch(
 
       <n-input
         v-if="repos.repos.length > SEARCH_THRESHOLD"
+        ref="repoSearch"
         v-model:value="repoQuery"
         size="small"
         clearable
@@ -414,6 +471,31 @@ watch(
       <op-journal />
     </div>
     </div>
+
+    <!--
+      设置入口：钉在侧栅左下角（需求 7.23）。
+
+      为什么不用页签：设置一年可能点不到两次，而它占的是主区导航位——
+      页签宽度有限，每多一个标签就少一格留给真正天天用的东西。
+      齿轮在左下角是固定位置：不占导航，但始终在，也符合“设置属于应用而不属于仓库”的直觉。
+
+      图标内联而不引图标库：项目里其它记号（文件树、diff 记号）都是这么画的，
+      为一个齿轮加一个依赖不值当。
+    -->
+    <div class="foot">
+      <button
+        type="button"
+        class="gear"
+        :class="{ active: settingsOpen }"
+        :aria-current="settingsOpen ? 'page' : undefined"
+        title="设置（Ctrl+,）"
+        :style="{ borderRadius: RADIUS_CONTROL }"
+        @click="toggleSettings"
+      >
+        <n-icon :component="Settings" size="14" />
+        <span>设置</span>
+      </button>
+    </div>
   </aside>
 </template>
 
@@ -431,6 +513,43 @@ watch(
   border-right: 1px solid var(--border);
   background: var(--surface-app);
   font-size: 12px;
+}
+
+/**
+ * 底部那条：只装一个设置齿轮。
+ *
+ * 钉在滚动区之外，所以不管上面的面板开了多少，它始终在左下角同一个位置——
+ * 这正是把设置放这里而不是放进页签的理由。
+ */
+.foot {
+  flex: none;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.gear {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  /* 圆角用模板上绑的 RADIUS_CONTROL 常量：写成自定义属性又带兜底值的写法，
+     正好是 check-tokens 要挑出来的那种“静默失效”写法，而它并不在颜色表里 */
+}
+
+.gear:hover {
+  background: var(--surface-hover);
+}
+
+.gear.active {
+  color: var(--accent);
+  background: var(--surface-selected);
 }
 
 .side-scroll {

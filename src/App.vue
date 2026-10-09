@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   NAlert,
@@ -18,9 +18,18 @@ import {
 import RepoSidebar from "@/components/RepoSidebar.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
+import { usePrefsStore as usePrefs } from "@/stores/prefs";
 import { INTERRUPT_LABEL, type Interrupt } from "@/api/refs";
 import { FONT_UI, RADIUS_CONTROL, tokens } from "@/styles/tokens";
 import { usePaneDivider } from "@/composables/usePaneDivider";
+import {
+  SHORTCUTS,
+  TAB_SHORTCUTS,
+  isTypingTarget,
+  matches,
+  type ShortcutContext,
+} from "@/shortcuts";
+import { runShell } from "@/shell";
 
 /**
  * 外壳照 Fork：左栏常驻仓库与只读信息，主区用页签切「历史 / 提交」。
@@ -79,6 +88,9 @@ const themeOverrides: GlobalThemeOverrides = {
 const activeTab = computed(() => {
   if (route.name === "commit") return "commit";
   if (route.name === "files") return "files";
+  if (route.name === "report") return "report";
+  if (route.name === "changelog") return "changelog";
+  if (route.name === "settings") return "settings";
   return "history";
 });
 /** 只读浏览仓库没有索引，提交页整个不给进（Rust 侧同样会拒，这里只是不摆出能点的按钮） */
@@ -109,6 +121,75 @@ const interruptExit = computed(() => INTERRUPT_EXIT[repos.interrupt]);
 function go(name: string | number) {
   router.push({ name: String(name) });
 }
+
+/**
+ * 全局快捷键（需求 7.23）。
+ *
+ * 按键集合来自 `shortcuts.ts` 的单一数组——设置页里的说明表渲染的是同一个数组，
+ * 所以不可能出现“文档写了但按了没反应”。
+ *
+ * 两条纪律：
+ * 1. 输入框里不劫持（用户在打字，不是在按快捷键），只有纯 `F5` 与数字键除外；
+ * 2. 有页面登记的动作交给页面，没登记的（比如设置页上的 F5）退回重读仓库状态，
+ *    而不是静默什么都不发生。
+ */
+const shortcutContext: ShortcutContext = {
+  refresh() {
+    // 页面自己登记了就用它（历史页会按当前筛选重跑），否则退回重读仓库
+    if (!runShell("refresh")) repos.refreshAll();
+  },
+  focusSearch() {
+    runShell("focusSearch");
+  },
+  submit() {
+    runShell("submit");
+  },
+  switchRepo() {
+    runShell("switchRepo");
+  },
+  gotoTab(index: number) {
+    const tab = TAB_SHORTCUTS[index];
+    if (tab) go(TAB_ROUTE[tab.label] ?? "history");
+  },
+  openSettings() {
+    go("settings");
+  },
+};
+
+/** 页签显示名 → 路由名。数字键跳转靠它，别处在别处再写一份 */
+const TAB_ROUTE: Record<string, string> = {
+  历史: "history",
+  文件: "files",
+  提交: "commit",
+  报告: "report",
+  CHANGELOG: "changelog",
+};
+
+function onKeyDown(event: KeyboardEvent) {
+  // F5 与数字键在输入框里也生效：前者是“重读数据”，后者是切页签，
+  // 两个都不会打断打字。其余组合一律让给输入框。
+  const typing = isTypingTarget(event.target);
+  for (const shortcut of SHORTCUTS) {
+    if (typing && !shortcut.keys.some((key) => /^F\d+$/.test(key))) continue;
+    if (!shortcut.keys.some((key) => matches(event, key))) continue;
+    event.preventDefault();
+    shortcut.run(shortcutContext);
+    return;
+  }
+  if (typing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+  const index = TAB_SHORTCUTS.findIndex((tab) => tab.key === event.key);
+  if (index >= 0) {
+    event.preventDefault();
+    shortcutContext.gotoTab(index);
+  }
+}
+
+onMounted(() => {
+  window.addEventListener("keydown", onKeyDown);
+  // 设置要开着也能被刷新，所以偏好在启动时就读一份
+  usePrefs().load();
+});
+onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 
 function closeError() {
   repos.error = null;
@@ -143,6 +224,11 @@ function closeError() {
               <!-- 文件页只读浏览，不碰工作区，所以 browse 仓库也摆出来 -->
               <n-tab name="files">文件</n-tab>
               <n-tab name="commit" :disabled="!commitTabEnabled">提交</n-tab>
+              <!-- 报告页只读历史，只读浏览的仓库也能看，所以不跟着工作区权限一起禁 -->
+              <n-tab name="report">报告</n-tab>
+              <!-- 导出可用；写回文件要工作区，所以只读浏览仓库下这个页签摆着但不写 -->
+              <n-tab name="changelog">CHANGELOG</n-tab>
+              <!-- 设置不在这里：入口是左下角的齿轮（App.vue 底部），见 TAB_SHORTCUTS 的注释 -->
             </n-tabs>
             <span class="headline" :title="headline">{{ headline }}</span>
           </header>

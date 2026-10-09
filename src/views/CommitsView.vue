@@ -23,6 +23,8 @@ import { useWriteStore } from "@/stores/write";
 import { specFor } from "@/api/spec";
 import { COMMIT_ROW_HEIGHT } from "@/styles/tokens";
 import { usePaneDivider } from "@/composables/usePaneDivider";
+import { provideShell } from "@/shell";
+import { usePrefsStore } from "@/stores/prefs";
 import type { CommitFilter } from "@/api/commit";
 
 /**
@@ -30,6 +32,7 @@ import type { CommitFilter } from "@/api/commit";
  * 改动清单和单个文件的差异（§7.4、§7.5，照 Fork 的一屏两栏）。
  */
 const repos = useReposStore();
+const prefsStore = usePrefsStore();
 const commitStore = useCommitStore();
 const detail = useDetailStore();
 const writes = useWriteStore();
@@ -48,6 +51,18 @@ const repoId = computed(() => repos.currentId);
  * 代码会挤成一条，先卡住而不是等用户自己发现。
  */
 const split = ref<HTMLElement | null>(null);
+/** Ctrl+F 的落点：筛选条里那个关键词框由 FilterBar 自己拿 ref 并抛出聚焦动作 */
+const filterBar = ref<InstanceType<typeof FilterBar> | null>(null);
+/** 列显示来自个人偏好（设置页里改）。偏好没读到时 store 给的是全开 */
+const prefs = computed(
+  () =>
+    prefsStore.prefs?.columns ?? {
+      refs: true,
+      author: true,
+      time: true,
+      sha: true,
+    },
+);
 const divider = usePaneDivider({
   container: split,
   storageKey: "git-tidy:history:split",
@@ -341,6 +356,25 @@ watch(repoId, (id) => {
 // 只在这一页存活时绑定，否则在「提交」页按 j 也会改历史页的选中项。
 onMounted(() => window.addEventListener("keydown", onKeyDown));
 onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
+
+/**
+ * 外壳快捷键（Ctrl+F / F5）登记在这一页名下。
+ *
+ * `refresh` 要走「按当前筛选重开列表」而不是简单重读仓库：这一页的筛选条件在
+ * `commitStore` 里，只有重新 `open` 才会带着筛选跑一遍图计算。
+ */
+let releaseSearch: (() => void) | undefined;
+let releaseRefresh: (() => void) | undefined;
+onMounted(() => {
+  releaseSearch = provideShell("focusSearch", () => filterBar.value?.focusSearch());
+  releaseRefresh = provideShell("refresh", () => {
+    if (repoId.value !== null) void commitStore.open(repoId.value);
+  });
+});
+onBeforeUnmount(() => {
+  releaseSearch?.();
+  releaseRefresh?.();
+});
 </script>
 
 <template>
@@ -354,6 +388,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
     <template v-else>
       <filter-bar
         v-if="repoId !== null"
+        ref="filterBar"
         :filter="commitStore.filter"
         :refs="repos.refs"
         :types="typeOptions"
@@ -416,6 +451,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
                   :row="commitStore.rowFor(item.id)"
                   :lanes="commitStore.graphLanes"
                   :selected="item.id === detail.sha"
+                  :columns="prefs"
                   @click="pick(item.id)"
                   @contextmenu="openMenu($event, item.id)"
                 />
