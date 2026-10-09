@@ -1,11 +1,14 @@
 pub mod blame;
 pub mod branch;
+pub mod changelog;
 pub mod clone;
 pub mod commit;
+pub mod compliance;
 pub mod conflict;
 pub mod detail;
 pub mod diff;
 pub mod graph;
+pub mod hook;
 pub mod log;
 pub mod message;
 pub mod process;

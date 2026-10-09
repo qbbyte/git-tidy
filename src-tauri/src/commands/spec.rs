@@ -6,6 +6,7 @@ use crate::config::check::Outcome;
 use crate::config::spec::{self, Spec};
 use crate::error::GitError;
 use crate::git::commit::{self, Draft};
+use crate::git::hook::{self, HookInstall, HookStatus};
 use crate::git::log;
 use crate::store::db::{query, Db};
 use crate::store::repos::{self, RepoKind};
@@ -18,7 +19,13 @@ const SCOPE_SUGGESTION_MAX: usize = 60;
 /// 所以两边都从这里取，不各自解释配置文件。
 #[tauri::command]
 pub async fn spec_for(state: State<'_, Arc<Db>>, id: i64) -> Result<Spec, GitError> {
-    let (path, kind) = query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
+    resolve_spec(state.inner(), id).await
+}
+
+/// 同一个读取逻辑的库内版本：hook 那几条命令没有 `State`（要连着跑好几步），
+/// 走这个而不是把 `State` 到处传。
+async fn resolve_spec(db: &Arc<Db>, id: i64) -> Result<Spec, GitError> {
+    let (path, kind) = query(db.clone(), move |conn| repos::locate(conn, id)).await?;
     tauri::async_runtime::spawn_blocking(move || match kind {
         RepoKind::Worktree => spec::load(&path),
         // 只读浏览仓库没有工作区，配置文件只能从 HEAD 里读
@@ -37,7 +44,7 @@ pub async fn message_check(
     id: i64,
     draft: Draft,
 ) -> Result<Outcome, GitError> {
-    let spec = spec_for(state, id).await?;
+    let spec = resolve_spec(state.inner(), id).await?;
     Ok(commit::preview(&spec, &draft))
 }
 
@@ -48,6 +55,57 @@ pub async fn commit_scopes(state: State<'_, Arc<Db>>, id: i64) -> Result<Vec<Str
     tauri::async_runtime::spawn_blocking(move || scopes_from_history(&path))
         .await
         .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// commit-msg hook 的当前状态（需求 7.20）。纯读，进页面就能调。
+#[tauri::command]
+pub async fn hook_status(state: State<'_, Arc<Db>>, id: i64) -> Result<HookStatus, GitError> {
+    let spec = resolve_spec(state.inner(), id).await?;
+    let path = worktree_path(state.inner(), id).await?;
+    tauri::async_runtime::spawn_blocking(move || hook::status(&path, &spec))
+        .await
+        .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 一键安装 / 强制覆盖（`force` 仅对默认 .git/hooks 下别人写的 commit-msg 有意义，
+/// 会先备份）。被 `core.hooksPath` 占着时一定不写文件，只把共存方案带回去。
+#[tauri::command]
+pub async fn hook_install(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    force: Option<bool>,
+) -> Result<HookInstall, GitError> {
+    let spec = resolve_spec(state.inner(), id).await?;
+    let path = worktree_path(state.inner(), id).await?;
+    let force = force.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || hook::install(&path, &spec, force))
+        .await
+        .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 卸载。只删本工具生成的那一份，别人的 hook 不动。
+#[tauri::command]
+pub async fn hook_uninstall(state: State<'_, Arc<Db>>, id: i64) -> Result<HookInstall, GitError> {
+    let spec = resolve_spec(state.inner(), id).await?;
+    let path = worktree_path(state.inner(), id).await?;
+    tauri::async_runtime::spawn_blocking(move || hook::uninstall(&path, &spec))
+        .await
+        .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 将要写入磁盘的那份脚本原文（需求 7.20：规则以字面量快照进脚本，且不依赖本工具）。
+/// 界面用它做「查看规则快照」与共存时的复制粘贴内容。
+#[tauri::command]
+pub async fn hook_script(state: State<'_, Arc<Db>>, id: i64) -> Result<String, GitError> {
+    let spec = resolve_spec(state.inner(), id).await?;
+    Ok(hook::render(&spec))
+}
+
+/// hook 写入的是 .git 下的文件，不是工作区文件，所以不走写操作日志；
+/// 但只读浏览仓库（treeless）同样没有 .git/hooks，那边在 Rust 侧就拒。
+async fn worktree_path(db: &Arc<Db>, id: i64) -> Result<std::path::PathBuf, GitError> {
+    let db = db.clone();
+    query(db, move |conn| repos::ensure_worktree(conn, id)).await
 }
 
 fn scopes_from_history(repo: &std::path::Path) -> Result<Vec<String>, GitError> {

@@ -365,6 +365,16 @@ fn condition_args(filter: &Filter) -> Vec<&str> {
     args
 }
 
+/// 从 HEAD 往前一次拿一批提交（最多 `limit` 条），不翻页、不数总数。
+///
+/// 符合率报告（§7.21）要的是"把这批提交里每一条都算一遍"，而不是"给用户翻的那一页"，
+/// 所以绕开分页：一次 `log -n limit`，剩下的聚合在调用方做。`limit` 是硬上限，
+/// 调用方必须自己把“只统计了前 N 条”说出来（需求 5.10：10 万级仓库不做全量统计）。
+pub fn scan(repo: &Path, filter: &Filter, limit: usize) -> Result<Vec<Commit>, GitError> {
+    let revision = filter.rev.clone().unwrap_or_else(|| "HEAD".to_string());
+    log_window(repo, filter, &revision, 0, limit)
+}
+
 /// 读一条提交本身（标题/作者/正文/父）。
 ///
 /// 列表页已经有行数据，不必再取一次；从文件历史、blame 这些"从别处跳过来"的地方

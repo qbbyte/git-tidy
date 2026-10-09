@@ -29,6 +29,10 @@ pub enum GitError {
     /// 前置校验不通过：工作区脏、中断态之外的状态不满足写命令的要求。
     /// `detail` 说明是哪一条，用户照着就能改，不用猜。
     NotClean { detail: String },
+    /// 写文件类操作（CHANGELOG）发现目标在预览之后被改过。
+    /// 与 `HeadMoved` 分开：那个说的是仓库位置变了，这个说的是文件内容变了，
+    /// 界面提示与补救动作完全不同，不能共用一条文案。
+    ConcurrentEdit { detail: String },
     /// HEAD 与界面加载时不一致（§4 的乐观并发）。IDE 或另一个终端正在写同一个仓库时会发生。
     /// 两个值都带出去：界面上能直接告诉用户"现在是哪个提交，你的界面还停在哪个"。
     HeadMoved { expected: String, actual: String },
@@ -71,6 +75,7 @@ impl GitError {
             Self::NothingStaged => "nothing_staged",
             Self::OperationInProgress { .. } => "operation_in_progress",
             Self::NotClean { .. } => "not_clean",
+            Self::ConcurrentEdit { .. } => "concurrent_edit",
             Self::HeadMoved { .. } => "head_moved",
             Self::VerificationFailed { .. } => "verification_failed",
             Self::NothingToUndo => "nothing_to_undo",
@@ -119,6 +124,9 @@ impl GitError {
                 format!("{label}：请先完成或中止这次操作，再使用工具的提交")
             }
             Self::NotClean { detail } => format!("工作区不满足这次操作的要求：{detail}"),
+            Self::ConcurrentEdit { detail } => {
+                format!("文件在预览之后被改过了，没有写入：{detail}")
+            }
             Self::HeadMoved { expected, actual } => format!(
                 "仓库已经被别处改动（现在在 {short_actual}，操作界面停在 {short_expected}），已拒绝执行",
                 short_actual = short(actual),
@@ -158,6 +166,7 @@ impl GitError {
                     .join("\n"),
             ),
             Self::NotClean { detail } => Some(detail.clone()),
+            Self::ConcurrentEdit { detail } => Some(detail.clone()),
             Self::VerificationFailed { detail } => Some(detail.clone()),
             Self::AuthRequired { detail } => Some(detail.clone()),
             Self::PatchApplyFailed { detail } => Some(detail.clone()),

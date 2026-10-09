@@ -5,7 +5,7 @@ use crate::git::message;
 
 /// 一条不合规原因。名字与需求 6.6 的"原因分类穷举"一一对应，
 /// 报告按它分桶计数，表单按它 `blocking` 决定能不能提交。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
     /// subject 为空
@@ -77,7 +77,7 @@ pub struct Outcome {
 
 /// 无信息量词表。判定方式是"整条描述拆词后每个词都命中"，
 /// 所以 `feat: 修复崩溃` 正常通过，而 `更新` / `wip fix` 会被拦下。
-const NON_INFORMATIVE: &[&str] = &[
+pub const NON_INFORMATIVE: &[&str] = &[
     "wip", "wips", "tmp", "temp", "todo", "misc", "test", "tests", "update", "updates", "updated",
     "change", "changes", "commit", "commits", "merge", "fix", "fixes", "fixing", "bug", "bugfix",
     "stuff", "asdf", "aaa", "1", "111", "0", ".", "临时", "更新", "修改", "提交", "测试", "修复",

@@ -19,6 +19,10 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             let db = store::db::Db::open(&data_dir).map_err(|err| format!("{err:?}"))?;
             app.manage(Arc::new(db));
+            // 个人偏好（§6.7 第二层）在 app config dir 的 preferences.json。
+            // 读坏了就用默认值，不报错——一份坏设置不该让应用起不来
+            let config_dir = app.path().app_config_dir()?;
+            app.manage(Arc::new(store::prefs::Prefs::load(&config_dir)));
             // 提交图的泳道分配结果（§6.3）。纯内存、以 HEAD 的 sha 为键，
             // 提交/amend/reset 之后键自己就变了，丢了只是慢一次，不会画错
             app.manage(Arc::new(commands::graph::Cache::default()));
@@ -48,6 +52,24 @@ pub fn run() {
             commands::spec::spec_for,
             commands::spec::message_check,
             commands::spec::commit_scopes,
+            commands::spec::hook_status,
+            commands::spec::hook_install,
+            commands::spec::hook_uninstall,
+            commands::spec::hook_script,
+            // M4 §7.21：符合率报告
+            commands::report::compliance_report,
+            commands::report::compliance_revisions,
+            // M4 §7.22：CHANGELOG 生成与导出
+            commands::changelog::changelog_build,
+            commands::changelog::changelog_previous_tag,
+            commands::changelog::changelog_read_target,
+            commands::changelog::changelog_write,
+            // M5 §7.23：个人偏好与外壳动作
+            commands::prefs::prefs_get,
+            commands::prefs::prefs_update,
+            commands::prefs::prefs_reset,
+            commands::prefs::prefs_path,
+            commands::shell::shell_open_terminal,
             commands::remote::repo_add_remote,
             commands::remote::repo_materialize,
             // M2：写命令全部经 commands::write::guard 的六步

@@ -1,10 +1,14 @@
+pub mod changelog;
 pub mod commit;
 pub mod detail;
 pub mod diff;
 pub mod file;
 pub mod graph;
+pub mod prefs;
 pub mod refs;
 pub mod remote;
 pub mod repo;
+pub mod report;
+pub mod shell;
 pub mod spec;
 pub mod write;
