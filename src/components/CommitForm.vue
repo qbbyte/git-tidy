@@ -319,7 +319,7 @@ onUnmounted(() => release?.());
       <n-input
         v-model:value="body"
         type="textarea"
-        placeholder="正文（可选）：为什么这么改、影响范围"
+        placeholder="正文（可选）：一行一个要点，如 1. 修复导出列错位"
         :autosize="{ minRows: 3, maxRows: 8 }"
       />
 

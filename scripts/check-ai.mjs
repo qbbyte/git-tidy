@@ -67,6 +67,10 @@ check("未截断时不提截断", prompt.includes("已被截断"), false);
 check("截断时提示词里说明", buildPrompt(big, ["feat"]).includes("已被截断"), true);
 check("空白名单也给指引", buildPrompt("d", []).includes("未限制"), true);
 check("diff 原样带进提示词", buildPrompt("diff --git a/x b/x", ["feat"]).includes("diff --git a/x b/x"), true);
+// 正文分条：日志要简洁，正文按「一行一个要点」的列表给，且不再索要长篇的动机/影响
+check("提示词要求正文分条", prompt.includes("有序列表分条"), true);
+check("提示词不再索要「动机与影响」", prompt.includes("动机与影响"), false);
+check("提示词不再要描述解释「为什么」", prompt.includes("说明做了什么、为什么"), false);
 
 // ── 解析：header + scope + 正文；以及各种不规范返回的退化处理 ─────────────
 check(
