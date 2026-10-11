@@ -40,6 +40,7 @@ const emit = defineEmits<{
   (e: "open-settings"): void;
   (e: "open-add-repo"): void;
   (e: "open-new-branch"): void;
+  (e: "open-branch-manager"): void;
 }>();
 
 const editing = ref<{ id: number; name: string } | null>(null);
@@ -398,7 +399,7 @@ function toggleExpandAll() {
           <n-button size="tiny" quaternary title="展开/折叠全部" @click="toggleExpandAll">
             <template #icon><n-icon :component="ListIcon" size="14" /></template>
           </n-button>
-          <n-button size="tiny" quaternary title="设置" @click="emit('open-settings')">
+          <n-button size="tiny" quaternary title="分支管理" @click="emit('open-branch-manager')">
             <template #icon><n-icon :component="Settings" size="14" /></template>
           </n-button>
         </div>

@@ -20,6 +20,7 @@ import RepoSidebar from "@/components/RepoSidebar.vue";
 import SettingsModal from "@/components/SettingsModal.vue";
 import AddRepoModal from "@/components/AddRepoModal.vue";
 import NewBranchModal from "@/components/NewBranchModal.vue";
+import RefsModal from "@/components/RefsModal.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { usePrefsStore as usePrefs } from "@/stores/prefs";
@@ -53,6 +54,7 @@ const writes = useWriteStore();
 const settingsVisible = ref(false);
 const addRepoVisible = ref(false);
 const newBranchVisible = ref(false);
+const refsVisible = ref(false);
 
 const pushing = ref(false);
 
@@ -300,7 +302,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
           <!-- 下方：侧栏 + 主区 -->
           <div class="body">
             <aside class="sider-wrap">
-              <repo-sidebar @open-settings="settingsVisible = true" @open-add-repo="addRepoVisible = true" @open-new-branch="newBranchVisible = true" />
+              <repo-sidebar @open-settings="settingsVisible = true" @open-add-repo="addRepoVisible = true" @open-new-branch="newBranchVisible = true" @open-branch-manager="refsVisible = true" />
             </aside>
 
             <main class="main-area">
@@ -357,6 +359,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
         <settings-modal v-model:show="settingsVisible" />
         <add-repo-modal v-model:show="addRepoVisible" />
         <new-branch-modal v-model:show="newBranchVisible" />
+        <refs-modal v-model:show="refsVisible" @new-branch="newBranchVisible = true" />
       </n-message-provider>
     </n-dialog-provider>
   </n-config-provider>
