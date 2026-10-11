@@ -146,9 +146,9 @@ async function stageSelected() {
   }
 }
 
+// 换文件就重读。**刻意不往外暴露 reload**：暂存之后这一栏自己会重读（见 stageSelected），
+// 而外部没有任何调用点——留一个没人用的出口，下次改动会以为它在被谁用着
 watch(() => props.file.path, load, { immediate: true });
-
-defineExpose({ reload: load });
 </script>
 
 <template>

@@ -456,10 +456,6 @@ export function writeBackups(repoId: number) {
   return call<Backup[]>("write_backups", { id: repoId });
 }
 
-export function writeBackupTarget(repoId: number, reference: string) {
-  return call<string | null>("write_backup_target", { id: repoId, reference });
-}
-
 /** 撤销上一步。HEAD 不在日志记录的位置时会被拒，界面据此提示去 reflog 找 */
 export function writeUndo(repoId: number) {
   return call<UndoReport>("write_undo", { id: repoId });

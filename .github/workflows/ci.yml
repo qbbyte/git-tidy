@@ -28,12 +28,15 @@ jobs:
       - run: npm run build
       # 冲突标记解析器的边界用例。它是纯 JS，不需要 git，所以放前端 job 里最省事
       - run: npm run check:conflict
-      # 下面四个同样是纯前端不变量脚本。它们存在的意义就是让那些「一旦破掉、界面上
+      # 下面五个同样是纯前端不变量脚本。它们存在的意义就是让那些「一旦破掉、界面上
       # 只会看起来变了而看不出哪里错了」的地方自动变红，不接进 CI 等于白写
       - run: npm run check:ai
       - run: npm run check:highlight
       - run: npm run check:tokens
       - run: npm run check:pane
+      # 提交页那几个宽度：CSS 里的 min-width 与 lib/layout.ts 的常量必须对得上，
+      # 对不上的症状是「某个窗口宽度下三栏刚好溢出」，很难联想到是这里
+      - run: npm run check:layout
 
   rust:
     name: Rust（${{ matrix.os }}）
@@ -85,3 +88,15 @@ jobs:
       - name: 测试
         working-directory: src-tauri
         run: cargo test
+
+      # §7.13 的验收项：拿真 git 造一次冲突，把它的草稿喂给解析器——解析器只有在
+      # 与 git 真正写下的标记一致时才可信。脚本是 PowerShell，所以只有 Windows 那一档
+      # 跑得了；它只用到 node（不装 node_modules：那个 .mjs 只 import 一个零依赖的 .ts），
+      # 所以显式装一个 node，不靠 runner 镜像里碰巧带着的那个版本
+      - uses: actions/setup-node@v4
+        if: matrix.os == 'windows-latest'
+        with:
+          node-version: "24"
+      - name: 真冲突的解析器验收
+        if: matrix.os == 'windows-latest'
+        run: npm run check:conflict-real

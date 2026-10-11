@@ -2,6 +2,8 @@ import { ref, shallowRef } from "vue";
 import { defineStore } from "pinia";
 import { GitTidyError } from "@/api/client";
 import type { Diff } from "@/api/detail";
+import type { FileContent } from "@/api/file";
+import { worktreeFileContent } from "@/api/file";
 import type { WorkingFile } from "@/api/status";
 import { stagedFileDiff, worktreeFileDiff } from "@/api/write";
 
@@ -16,6 +18,9 @@ import { stagedFileDiff, worktreeFileDiff } from "@/api/write";
 
 /** 预览的是这个文件的哪一半，与提交页左栏那两列一一对应 */
 export type PreviewSide = "staged" | "worktree";
+
+/** 这一栏画的是差异，还是整份正文（未跟踪文件没有可比的另一侧） */
+export type PreviewKind = "diff" | "content";
 
 /**
  * 「变更」列的判据，必须与 `repos.changedFiles` 逐字一致。
@@ -34,14 +39,10 @@ function onSide(file: WorkingFile, side: PreviewSide): boolean {
  * 这个文件的差异为什么取不出来。**非空时不发 IPC**：宁可先把原因说清楚，
  * 也不要拿一次注定为空的 diff 去让人猜"是不是它没改动"。
  *
- * 两条都是 §7.8 那套硬边界在预览里的同一口径：
- * - 未跟踪文件不在索引里，git 两侧都给不出差异（`git diff -- 未跟踪文件` 是空的）；
- * - 冲突文件的差异是 git 的合并格式，逐行画出来不是"这次改了什么"。
+ * 现在只剩冲突这一条了：未跟踪文件改走正文预览（`kind: "content"`），不再是无话可说。
+ * 冲突文件的差异是 git 的合并格式，逐行画出来不是"这次改了什么"。
  */
 function blockedReason(file: WorkingFile): string | null {
-  if (file.untracked) {
-    return "未跟踪文件不在索引里，git 给不出差异。先勾选暂存，之后这里会显示它进索引的那一份。";
-  }
   if (file.conflict) {
     return "这个文件正处在冲突中，逐行差异没有意义。请在冲突面板里逐块取舍。";
   }
@@ -54,10 +55,20 @@ export const usePreviewStore = defineStore("preview", () => {
   /** 正在看的文件路径。null = 没选 */
   const path = ref<string | null>(null);
   const side = ref<PreviewSide>("staged");
+  /**
+   * 这一栏画的是差异还是整份正文。
+   *
+   * 未跟踪文件没有可比的另一侧（它还没进索引，`git diff` 两侧都是空的），可它恰恰是
+   * "这次要新增的东西"，提交前最该看一眼。所以这一类文件直接给正文，而不是给一句
+   * "看不了"——它和"暂存了一半"完全是两件事，用同一个空状态表达是在骗人。
+   */
+  const kind = ref<PreviewKind>("diff");
   const diff = shallowRef<Diff | null>(null);
+  /** `kind` 为 content 时的正文 */
+  const content = shallowRef<FileContent | null>(null);
   const loading = ref(false);
   const error = ref<GitTidyError | null>(null);
-  /** 取不到差异的原因（未跟踪 / 冲突）。非空时 `diff` 一定是 null */
+  /** 取不到差异的原因（冲突）。非空时一定不发 IPC，两个结果也都是 null */
   const blocked = ref<string | null>(null);
   const ignoreWhiteSpace = ref(false);
 
@@ -82,6 +93,12 @@ export const usePreviewStore = defineStore("preview", () => {
   async function load(id: number, file: WorkingFile, which: PreviewSide, mine: number) {
     loading.value = true;
     try {
+      if (kind.value === "content") {
+        const got = await worktreeFileContent(id, file.path);
+        if (mine !== seq) return;
+        content.value = got;
+        return;
+      }
       // 改名要把来源路径一起给，否则 git 配不成一对，改了一行的文件会画成整个新增
       const got =
         which === "staged"
@@ -105,7 +122,9 @@ export const usePreviewStore = defineStore("preview", () => {
     side.value = which;
     last = file;
     signature = statusPair(file);
+    kind.value = file.untracked ? "content" : "diff";
     diff.value = null;
+    content.value = null;
     error.value = null;
     blocked.value = blockedReason(file);
     if (blocked.value !== null) {
@@ -170,7 +189,9 @@ export const usePreviewStore = defineStore("preview", () => {
     ++seq;
     repoId.value = null;
     path.value = null;
+    kind.value = "diff";
     diff.value = null;
+    content.value = null;
     error.value = null;
     blocked.value = null;
     loading.value = false;
@@ -181,7 +202,9 @@ export const usePreviewStore = defineStore("preview", () => {
   return {
     path,
     side,
+    kind,
     diff,
+    content,
     loading,
     error,
     blocked,

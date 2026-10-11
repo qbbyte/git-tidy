@@ -421,8 +421,16 @@ function closeError() {
   user-select: none;
 }
 
+/**
+ * 侧栏宽度固定，但**不是"窗口再小也纹丝不动"**。
+ *
+ * 固定指的是不跟着窗口一起变宽（见 usePaneDivider 里像素制的理由）；而窗口缩到很小时
+ * 它必须让位：最小窗口 + 拖到最宽的侧栏会把主区压到 500px 以下，那时提交页的表单栏
+ * 加差异栏怎么也摆不下，整页出现横向滚动条。`min-width` 与分隔条的 `min: 220` 是同一个数。
+ */
 .sider {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 220px;
 }
 
 .sider-divider {
@@ -447,11 +455,21 @@ function closeError() {
   background: var(--accent);
 }
 
+/**
+ * 主区的下限，也是**侧栏让位的唯一办法**。
+ *
+ * 光在侧栏写 `flex: 0 1 auto` 是不够的：`.sider` 的 flex 基准来自它的 width，
+ * 而这里的基准是 0%，两者之和永远小于窗口宽度——永远是正富余，侧栏一次都不会缩。
+ * 给主区一个真实下限之后，窗口小到装不下时 flex 才会去压侧栏。
+ *
+ * 622 = 窄布局差异栏 300 + 表单栏 290 + `.content` 左右内边距 32：提交页窄布局那一档
+ * 就是全应用最挤的地方，它是整壳的下限。`npm run check:layout` 会验这三项之和。
+ */
 .main {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-width: 0;
+  min-width: 622px;
 }
 
 /* 页头右端的动作组：页签左对齐之后，右端本来是空的，把工具按钮推过去 */

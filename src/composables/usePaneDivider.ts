@@ -1,9 +1,9 @@
-import { onBeforeUnmount, ref, type Ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue";
 
 /**
  * 可拖拽的分栏分隔条。
  *
- * 三处共用（历史页、文件页、侧栏），所以持久化与约束只在这里写一次。
+ * 四处共用（侧栏、提交页、历史页、文件页），所以持久化与约束只在这里写一次。
  *
  * 存 `localStorage` 而不是 `preferences.json`：
  * 那一层现在是实现好的，但它管的是拉取策略与列表列显示这类个人偏好，分栏宽度不算；
@@ -97,10 +97,64 @@ export function usePaneDivider(options: PaneDividerOptions) {
   const containerMinWidth = options.containerMinWidth ?? 360;
 
   const stored = readStored(storageKey);
-  const size = ref(clampValue(stored ?? options.fallback, min, max));
+  /**
+   * 用户自己拖出来的宽度。
+   *
+   * **它是"偏好"，不是"当前生效值"**（见 `size`）：拖拽与 `reset` 只改它，也只把它落盘。
+   */
+  const preferred = ref(clampValue(stored ?? options.fallback, min, max));
   const dragging = ref(false);
+  /** 容器当前的宽度。0 = 还没量到（挂载之前） */
+  const containerWidth = ref(0);
+
+  /**
+   * 这一栏当前实际占多宽：把 `preferred` 按容器算出来的区间夹一次。
+   *
+   * 与 `preferred` 分开是必须的。把夹取结果写回偏好，窗口一缩就永久改掉了用户拖出来的
+   * 宽度，窗口恢复之后也回不去。分开之后：缩小时自动让位，放大时自动还原。
+   *
+   * 注意**像素制在这里并不会随容器缩小**（`computePaneLimit` 对 px 返回静态区间）：
+   * 那几个栏的补集都是 `flex: 1`，拥挤时是该由补集让位，而不是把导航栏压窄。
+   */
+  const size = computed(() => {
+    const { lo, hi } = computePaneLimit({
+      containerWidth: containerWidth.value,
+      unit,
+      min,
+      max,
+      containerMinWidth,
+    });
+    return clampValue(preferred.value, lo, hi);
+  });
 
   let detach: (() => void) | null = null;
+  let observer: ResizeObserver | null = null;
+
+  /**
+   * 盯着容器尺寸。
+   *
+   * 原来只在拖拽时按容器算区间，于是有一个很难联想到的现象：在大窗口下拖出来的宽度是
+   * 合法的，把窗口缩小之后同一个宽度就越界了——比例制会压垮补集（历史页的详情栏被挤到
+   * 200px 以下），而没有任何东西会把它拉回来，除非用户想起来再拖一次。
+   *
+   * 顺带把量到的宽度暴露出去：有的页面要靠它决定"这个宽度还摆不摆得下三栏"。
+   */
+  watch(
+    container,
+    (el) => {
+      observer?.disconnect();
+      observer = null;
+      if (el === null) return;
+      const measure = () => {
+        // 与拖拽那条路取同一个量（border box）：两处差一个 padding 就会互相打架
+        containerWidth.value = el.getBoundingClientRect().width;
+      };
+      observer = new ResizeObserver(measure);
+      observer.observe(el);
+      measure();
+    },
+    { immediate: true },
+  );
 
   function onPointerDown(event: PointerEvent) {
     // 只认主键：右键 / 中键拖会变成别的交互，抢过来反而让人以为坏了
@@ -125,12 +179,12 @@ export function usePaneDivider(options: PaneDividerOptions) {
         max,
         containerMinWidth,
       });
-      size.value = clampValue(raw, lo, hi);
+      preferred.value = clampValue(raw, lo, hi);
     };
 
     const onUp = () => {
       dragging.value = false;
-      persist(storageKey, size.value);
+      persist(storageKey, preferred.value);
       document.body.style.userSelect = previousUserSelect;
       detach?.();
     };
@@ -150,11 +204,14 @@ export function usePaneDivider(options: PaneDividerOptions) {
 
   /** 双击回到默认——拖乱了之后总得有一条回去的路 */
   function reset() {
-    size.value = clampValue(options.fallback, min, max);
-    persist(storageKey, size.value);
+    preferred.value = clampValue(options.fallback, min, max);
+    persist(storageKey, preferred.value);
   }
 
-  onBeforeUnmount(() => detach?.());
+  onBeforeUnmount(() => {
+    detach?.();
+    observer?.disconnect();
+  });
 
-  return { size, dragging, onPointerDown, reset };
+  return { size, dragging, containerWidth, onPointerDown, reset };
 }

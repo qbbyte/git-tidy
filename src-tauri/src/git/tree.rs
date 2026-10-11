@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -99,34 +99,88 @@ fn parse(stdout: &str) -> Result<Vec<Entry>, GitError> {
 pub fn content(repo: &Path, rev: &str, path: &str) -> Result<Content, GitError> {
     let object = format!("{rev}:{path}");
     let size = object_size(repo, &object)?;
-    if size > MAX_TEXT_BYTES as u64 {
-        // 超阈值也回前缀：界面上直接给前几百 KB 比什么都不给有用，
-        // 但必须说清截断了，否则用户会以为文件就这么多
-        let head = process::run_bytes(Some(repo), &["cat-file", "blob", &object], &[])?
-            .expect_success()?;
-        return Ok(Content {
-            path: path.to_string(),
-            text: Some(loose_text(&head)),
-            size,
-            binary: false,
-            truncated: true,
-        });
-    }
-
     let bytes =
         process::run_bytes(Some(repo), &["cat-file", "blob", &object], &[])?.expect_success()?;
+    Ok(describe(path, &bytes, size))
+}
+
+/// 工作区里一个文件的正文。
+///
+/// 未跟踪文件两边都取不到差异（它还没进索引），可它恰恰是"这次要新增的东西"，
+/// 提交前最该看一眼。所以这一类文件走正文预览，闸门与 `content` 完全同一套。
+///
+/// 与 `content` 的差别只有"从哪读"：那边走 `cat-file` 读对象库，这边直接读磁盘。
+pub fn worktree_content(repo: &Path, path: &str) -> Result<Content, GitError> {
+    let target = contained(repo, path)?;
+    let size = std::fs::metadata(&target)
+        .map_err(|err| GitError::Internal(err.to_string()))?
+        .len();
+
+    if size > MAX_TEXT_BYTES as u64 {
+        // 这一档只用得上前缀，就别把整个文件读进来——一个几百 MB 的产物整个读一遍
+        // 只为丢掉后面 99%，是这一层最不该付的代价
+        let head = read_prefix(&target, MAX_TEXT_BYTES)?;
+        return Ok(describe(path, &head, size));
+    }
+
+    let bytes = std::fs::read(&target).map_err(|err| GitError::Internal(err.to_string()))?;
+    Ok(describe(path, &bytes, size))
+}
+
+/// 把仓库内的相对路径解析成一个**确实还在仓库里**的绝对路径。
+///
+/// 这一条必须有：路径来自前端。`worktree_file_diff` 那类命令把路径交给 git 当 pathspec
+/// （带 `:(literal)` 前缀），逃逸由 git 自己拦；而这里是直接按路径读磁盘，
+/// `../../..` 和 `D:` 开头的绝对路径都会走到仓库外面——那等于给 WebView 开了一个
+/// 读任意文件的口子。
+///
+/// 判据用 canonicalize 之后比前缀，而不是逐段检查字符串：符号链接指到仓库外时，
+/// 只有前者拦得住。
+fn contained(repo: &Path, path: &str) -> Result<PathBuf, GitError> {
+    let inside = |err: std::io::Error| GitError::Internal(err.to_string());
+    let root = std::fs::canonicalize(repo).map_err(inside)?;
+    let target = std::fs::canonicalize(repo.join(path)).map_err(inside)?;
+    if !target.starts_with(&root) {
+        return Err(GitError::GitFailed {
+            stderr: format!("不是仓库内的路径：{path}"),
+        });
+    }
+    Ok(target)
+}
+
+/// 读前 `limit` 个字节。
+fn read_prefix(path: &Path, limit: usize) -> Result<Vec<u8>, GitError> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|err| GitError::Internal(err.to_string()))?;
+    let mut buffer = Vec::new();
+    file.take(limit as u64)
+        .read_to_end(&mut buffer)
+        .map_err(|err| GitError::Internal(err.to_string()))?;
+    Ok(buffer)
+}
+
+/// 二进制判定 + 截断 + 正文组装。
+///
+/// 两条读法（对象库 / 工作区）共用这一份，否则同一个文件在两个入口里可能一会儿是文本、
+/// 一会儿是二进制，而用户没有理由相信其中哪一个。
+///
+/// `MAX_TEXT_BYTES` 管的是**回给前端的这一份**：超了截断并标 `truncated`。注意截断之后
+/// 仍然要做二进制判定——一个 200 MB 的压缩包不该因为太大就被当成文本送给界面。
+/// （`bytes` 可能已经是调用方截好的前缀，所以判定与截断都按它自己的长度来。）
+fn describe(path: &str, bytes: &[u8], size: u64) -> Content {
+    let truncated = size > MAX_TEXT_BYTES as u64 || bytes.len() > MAX_TEXT_BYTES;
+    let head = &bytes[..bytes.len().min(MAX_TEXT_BYTES)];
     // 文本判定看前 8 KB：完整扫一遍几 MB 的文件只为了找 NUL 不值当，
     // 而没有 NUL 的二进制（PSD 之类）本来就超出这个视图的能力范围
-    let window = &bytes[..bytes.len().min(8192)];
-    let binary = window.contains(&0);
+    let binary = head[..head.len().min(8192)].contains(&0);
 
-    Ok(Content {
+    Content {
         path: path.to_string(),
-        text: (!binary).then(|| loose_text(&bytes)),
+        text: (!binary).then(|| loose_text(head)),
         size,
         binary,
-        truncated: false,
-    })
+        truncated,
+    }
 }
 
 /// 二进制判定与正文都用同一套宽松解码：坏字节换成 U+FFFD，
@@ -272,7 +326,82 @@ mod tests {
         let got = content(repo_path, "HEAD", "big.txt").expect("读正文");
         assert!(got.truncated, "超阈值要截断并说出来");
         assert!(got.size > MAX_TEXT_BYTES as u64);
-        assert!(got.text.expect("有前缀").starts_with("行\n"));
+        let text = got.text.expect("有前缀");
+        assert!(text.starts_with("行\n"));
+        // 「只给前缀」要真的截：闸门管的是回给前端的这一份，不截的话一个几百 MB 的
+        // 日志会被整份塞进一次 IPC，而界面上还写着"只给前一段"
+        assert!(
+            text.len() <= MAX_TEXT_BYTES,
+            "回给前端的是 {} 字节，闸门是 {MAX_TEXT_BYTES}",
+            text.len()
+        );
+    }
+
+    #[test]
+    fn worktree_content_reads_the_file_on_disk() {
+        let dir = repo();
+        let repo_path = dir.path();
+        // 刻意不 add：未跟踪文件在对象库里没有任何一份，只有磁盘上这一份可读
+        std::fs::write(repo_path.join("新文件.txt"), "还没 add 的内容\n").expect("write");
+
+        let got = worktree_content(repo_path, "新文件.txt").expect("读工作区正文");
+        assert!(!got.binary);
+        assert!(!got.truncated);
+        assert_eq!(got.text.as_deref(), Some("还没 add 的内容\n"));
+        assert_eq!(
+            got.size, 21,
+            "两个汉字 + 空格 + add + 空格 + 三个汉字 + 换行"
+        );
+    }
+
+    #[test]
+    fn a_worktree_binary_file_has_no_text() {
+        let dir = repo();
+        let repo_path = dir.path();
+        std::fs::write(repo_path.join("blob.bin"), [0u8, 1, 2, 3]).expect("write");
+
+        let got = worktree_content(repo_path, "blob.bin").expect("读工作区正文");
+        assert!(got.binary);
+        assert_eq!(got.text, None, "二进制不给正文");
+    }
+
+    /// 路径来自前端：`..` 与绝对路径都必须被挡在仓库里
+    ///
+    /// 这一条是安全边界，不是功能：本命令直接按路径读磁盘，而 WebView 可以传任意
+    /// 字符串进来。漏了它就等于给界面开了一个读任意文件的口子。
+    #[test]
+    fn a_path_that_escapes_the_repository_is_refused() {
+        let dir = repo();
+        let repo_path = dir.path();
+        std::fs::write(repo_path.join("inside.txt"), "x\n").expect("write");
+
+        // 隔壁那个临时目录：与仓库同一个父目录，所以 `../<名字>/secret.txt` 真的存在
+        let elsewhere = tempfile::tempdir().expect("tempdir");
+        std::fs::write(elsewhere.path().join("secret.txt"), "secret\n").expect("write");
+        let sibling = elsewhere
+            .path()
+            .file_name()
+            .expect("有名字")
+            .to_string_lossy();
+
+        let up = format!("../{sibling}/secret.txt");
+        // `.err().expect()` 而不是 `.expect_err()`：`Content` 没有 Debug（它只 Serialize），
+        // 后者编不过。diff.rs 里对同一个问题用的也是这一种写法
+        let err = worktree_content(repo_path, &up)
+            .err()
+            .expect("不许跑出仓库");
+        assert!(format!("{err:?}").contains("仓库内"), "{err:?}");
+
+        let absolute = elsewhere.path().join("secret.txt");
+        let err = worktree_content(repo_path, absolute.to_str().expect("utf-8 路径"))
+            .err()
+            .expect("绝对路径也要挡");
+        assert!(format!("{err:?}").contains("仓库内"), "{err:?}");
+
+        assert!(
+            worktree_content(repo_path, "inside.txt").is_ok(),
+            "仓库里的正常路径不能被误伤"
+        );
     }
 
     #[test]

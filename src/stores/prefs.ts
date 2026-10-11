@@ -39,16 +39,35 @@ export const usePrefsStore = defineStore("prefs", () => {
     }
   }
 
-  /** 改一项并立刻落盘。返回存进去的真值——窗口尺寸会被夹取，界面要显示它。 */
-  async function patch(change: Partial<Preferences>) {
-    if (!prefs.value) await load();
-    if (!prefs.value) return;
-    error.value = null;
-    try {
-      prefs.value = await prefsUpdate({ ...prefs.value, ...change });
-    } catch (err) {
-      error.value = wrap(err);
-    }
+  /**
+   * 落盘队列。**这是 `patch` 必须串行的理由**：`prefsUpdate` 在 Rust 侧是整份替换
+   * （`Prefs::replace`），两次改设置落在同一趟 IPC 里时，后一次若拿调用点当时读到的
+   * `prefs.value` 去拼整份，前一次的改动就被静默覆盖掉了。
+   */
+  let chain: Promise<void> = Promise.resolve();
+
+  /**
+   * 改一项并立刻落盘。返回存进去的真值——窗口尺寸会被夹取，界面要显示它。
+   *
+   * `change` 收的是**函数**而不是一个对象：拼接要发生在"上一笔写完之后"。
+   * 调用点（比如设置页的四个开关）没法知道前一秒那一笔写完了没有，让它去读
+   * `prefs.value` 就等于让它赌一次时序。
+   */
+  function patch(change: (current: Preferences) => Partial<Preferences>) {
+    const task = chain.then(async () => {
+      if (!prefs.value) await load();
+      const current = prefs.value;
+      if (!current) return;
+      error.value = null;
+      try {
+        prefs.value = await prefsUpdate({ ...current, ...change(current) });
+      } catch (err) {
+        error.value = wrap(err);
+      }
+    });
+    // 出错也往下走：`task` 自己把异常吞成了 `error`，链不能因此断掉
+    chain = task;
+    return task;
   }
 
   async function reset() {

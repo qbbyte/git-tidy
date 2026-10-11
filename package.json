@@ -12,6 +12,7 @@
     "check:pane": "node --experimental-strip-types scripts/check-pane-divider.mjs",
     "check:highlight": "node --experimental-strip-types scripts/check-highlight.mjs",
     "check:ai": "node --experimental-strip-types scripts/check-ai.mjs",
+    "check:layout": "node --experimental-strip-types scripts/check-layout.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -20,7 +21,6 @@
     "@tauri-apps/plugin-dialog": "^2.8.1",
     "@tauri-apps/plugin-opener": "^2",
     "@vicons/tabler": "^0.13.0",
-    "@vueuse/core": "^15.0.0",
     "dayjs": "^1.11.23",
     "naive-ui": "^2.45.3",
     "pinia": "^4.0.3",

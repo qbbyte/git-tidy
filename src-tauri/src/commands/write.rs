@@ -965,8 +965,12 @@ pub async fn write_backups(state: State<'_, Arc<Db>>, id: i64) -> Result<Vec<Bac
         .map_err(|err| GitError::Internal(err.to_string()))?
 }
 
-/// 某个还原 ref 现在指向哪里。界面上给"找回改写前的状态"用：ref 可能已被 gc 或手动清掉，
-/// 那时返回 None 而不是报错——用户看到的是一个失效的还原点，不是一次失败。
+/// 某个还原 ref 现在指向哪里。ref 可能已被 gc 或手动清掉，那时返回 None 而不是报错——
+/// 用户看到的是一个失效的还原点，不是一次失败。
+///
+/// **界面暂时没调它**：`write_backups` 返回的 `Backup` 本来就带 sha，而那份列表每次打开
+/// 日志都重取，所以"它现在指哪"当场就是准的。留着是为了另一档需求——列表拿到之后 ref
+/// 才被清掉。它的 ref 名校验带着一组安全用例（`--delete`、`../` 逃逸），删掉容易、重建难。
 #[tauri::command]
 pub async fn write_backup_target(
     state: State<'_, Arc<Db>>,

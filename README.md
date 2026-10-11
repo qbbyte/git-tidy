@@ -124,6 +124,7 @@ npm run check:highlight      # diff 语法高亮的「拼回去必须等于原�
 npm run check:ai             # AI 提交信息的 endpoint 归一 / 截断上报 / 解析退化 / type 收敛
 npm run check:tokens         # 设计 token 表
 npm run check:pane           # 面板分隔条
+npm run check:layout         # 提交页那几个宽度：CSS 与 src/lib/layout.ts 必须对得上
 ```
 
 Rust 侧的格式、lint 与测试：

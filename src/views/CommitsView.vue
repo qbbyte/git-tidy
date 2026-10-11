@@ -25,6 +25,9 @@ import { COMMIT_ROW_HEIGHT } from "@/styles/tokens";
 import { usePaneDivider } from "@/composables/usePaneDivider";
 import { provideShell } from "@/shell";
 import { usePrefsStore } from "@/stores/prefs";
+// 「焦点在输入框里就不抢键」的判据与提交页共用同一份：两处都要挡，
+// 而挡的规则只能有一处，否则改了一边另一边就开始抽风
+import { isTypingTarget } from "@/shortcuts";
 import type { Commit, CommitFilter } from "@/api/commit";
 
 /**
@@ -178,19 +181,6 @@ const selectedIndex = computed(() => {
   if (sha === null) return -1;
   return commitStore.commits.findIndex((item) => item.id === sha);
 });
-
-/**
- * 焦点在输入框里就不抢键。
- *
- * 不加这一条的话，在筛选栏的关键词框里按 ↓ 会把选中提交往下移，
- * 而用户以为自己是在选下拉建议——这是最容易被投诉的一类「快捷键抽风」。
- */
-function isTypingTarget(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  if (!el || typeof el.tagName !== "string") return false;
-  if (el.isContentEditable) return true;
-  return ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
-}
 
 function selectAt(index: number) {
   const commits = commitStore.commits;

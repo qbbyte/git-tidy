@@ -50,6 +50,7 @@ pub fn run() {
             commands::file::file_history,
             commands::file::file_tree,
             commands::file::file_content,
+            commands::file::worktree_file_content,
             commands::graph::commit_graph,
             commands::refs::refs_scan,
             commands::spec::spec_for,

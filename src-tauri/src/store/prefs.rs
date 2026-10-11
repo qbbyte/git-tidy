@@ -227,6 +227,29 @@ mod tests {
         assert!(!second.get().columns.author);
     }
 
+    /// AI 三栏也要能过重启。
+    ///
+    /// 单独拎出来说：它和别的偏好不一样，是明文长串，丢了用户得回服务商那里重新取一次
+    /// key。而它在界面上"看起来没了"的原因曾经不在这一层（前端草稿从没被落盘值填过），
+    /// 所以更要把"存储层这一份是好的"钉住——否则下次出问题又得从头怀疑一遍。
+    #[test]
+    fn the_ai_config_survives_a_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let first = Prefs::load(dir.path());
+        let mut next = first.get();
+        next.ai = AiConfig {
+            endpoint: "https://api.example.com/v1".into(),
+            api_key: "sk-test".into(),
+            model: "gpt-4o-mini".into(),
+        };
+        first.replace(next).expect("write");
+
+        let second = Prefs::load(dir.path());
+        assert_eq!(second.get().ai.endpoint, "https://api.example.com/v1");
+        assert_eq!(second.get().ai.api_key, "sk-test");
+        assert_eq!(second.get().ai.model, "gpt-4o-mini");
+    }
+
     /// 旧版本写的文件没有新字段：补默认值，而不是整份丢掉
     #[test]
     fn an_older_file_gains_new_fields_as_defaults() {

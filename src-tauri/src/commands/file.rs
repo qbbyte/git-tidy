@@ -85,6 +85,30 @@ pub async fn file_content(
         .map_err(|err| GitError::Internal(err.to_string()))?
 }
 
+/// 工作区里一个文件的正文（未跟踪文件在提交页里的预览）。
+///
+/// 与 `file_content` 分开：那个读的是某个修订里的对象，这个读的是磁盘上的当前内容。
+/// 走 `ensure_worktree`：只读浏览仓库没有工作区，本就不该出现"提交"入口。
+///
+/// 路径的合法性由 `tree::worktree_content` 自己确认（canonicalize 之后比前缀）。
+/// **不用 `check_path`**：那个为了拼 `rev:path` 而禁掉冒号，可 Linux 下 `a:b` 是合法
+/// 文件名——用它会把能读的文件挡掉，而"跑出仓库"这件事它也并不比前者管得严。
+#[tauri::command]
+pub async fn worktree_file_content(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    path: String,
+) -> Result<tree::Content, GitError> {
+    let repo_path = query(state.inner().clone(), move |conn| {
+        repos::ensure_worktree(conn, id)
+    })
+    .await?;
+
+    tauri::async_runtime::spawn_blocking(move || tree::worktree_content(&repo_path, &path))
+        .await
+        .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
 /// 修订号既可以是提交号，也可以是 `HEAD~2`、`main` 这类 rev。两种形态都要进 git 的
 /// 参数位，所以这里只放行"看起来像一个 rev"的串：**绝不能以 `-` 开头**，
 /// 否则 git 把它当选项解析（`--upload-pack=...` 这类就能被当命令执行）。

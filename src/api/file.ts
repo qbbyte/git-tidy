@@ -66,3 +66,13 @@ export function fileTree(repoId: number, rev: string) {
 export function fileContent(repoId: number, rev: string, path: string) {
   return call<FileContent>("file_content", { id: repoId, rev, path });
 }
+
+/**
+ * 工作区里一个文件的正文（未跟踪文件在提交页里的预览）。
+ *
+ * 与 `fileContent` 分开：那个读的是某个修订里的对象，这个读的是磁盘上的当前内容。
+ * 未跟踪文件两边都取不到差异，于是这里成了它唯一的预览入口。
+ */
+export function worktreeFileContent(repoId: number, path: string) {
+  return call<FileContent>("worktree_file_content", { id: repoId, path });
+}

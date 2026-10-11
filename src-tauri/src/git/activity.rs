@@ -1,3 +1,21 @@
+//! 活跃度统计（报告页的第二个视角）。
+//!
+//! 与符合率报告同源的纪律：**所有数字都由这里出**，界面不重算、不猜。
+//! 两者共用 `log::Filter` 的条件（同一组 `--since/--author/--rev`），
+//! 所以"报告里的条数"和"历史里筛出来的条数"不会各说各话。
+//!
+//! 三条口径上的自觉（都是"算错比不算更糟"的坑）：
+//!
+//! 1. **作者走 `.mailmap`**（`%aN/%aE` 而不是 `%an/%ae`）。同一个人换邮箱、换机器
+//!    就该是同一个人，否则"每人提交次数"会把一个人拆成三个，表格直接失去意义。
+//! 2. **merge 与 revert 不计入**。理由与符合率报告一样：它们的信息是 git 生成的，
+//!    记在谁头上都不对；`excluded` 把排除了多少说出来。
+//! 3. **行数是"git 记录的增删行"，不是净产出**。rebase / amend 会把同一次改动数两遍，
+//!    大重构也会刷屏。字段命名与界面文案都按"活动度"而不是"绩效"来写。
+//!
+//! 上限与截断：`SCAN_LIMIT` 与符合率报告同量级，撞了上限必须 `truncated` 明说——
+//! 长区间下静默截断比不给数字更糟（需求 5.10：10 万级仓库不做全量统计）。
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -7,24 +25,6 @@ use crate::error::GitError;
 use crate::git::log::{self, Filter};
 use crate::git::message;
 use crate::git::process;
-
-/// 活跃度统计（报告页的第二个视角）。
-///
-/// 与符合率报告同源的纪律：**所有数字都由这里出**，界面不重算、不猜。
-/// 两者共用 `log::Filter` 的条件（同一组 `--since/--author/--rev`），
-/// 所以"报告里的条数"和"历史里筛出来的条数"不会各说各话。
-///
-/// 三条口径上的自觉（都是"算错比不算更糟"的坑）：
-///
-/// 1. **作者走 `.mailmap`**（`%aN/%aE` 而不是 `%an/%ae`）。同一个人换邮箱、换机器
-///    就该是同一个人，否则"每人提交次数"会把一个人拆成三个，表格直接失去意义。
-/// 2. **merge 与 revert 不计入**。理由与符合率报告一样：它们的信息是 git 生成的，
-///    记在谁头上都不对；`excluded` 把排除了多少说出来。
-/// 3. **行数是"git 记录的增删行"，不是净产出**。rebase / amend 会把同一次改动数两遍，
-///    大重构也会刷屏。字段命名与界面文案都按"活动度"而不是"绩效"来写。
-///
-/// 上限与截断：`SCAN_LIMIT` 与符合率报告同量级，撞了上限必须 `truncated` 明说——
-/// 长区间下静默截断比不给数字更糟（需求 5.10：10 万级仓库不做全量统计）。
 
 /// 硬上限。撞上了就是 `truncated`，界面要显示"只统计了最近 N 条"
 const SCAN_LIMIT: usize = 5000;
@@ -373,10 +373,6 @@ fn parse(raw: &str) -> Result<Vec<Parsed>, GitError> {
     Ok(commits)
 }
 
-
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,7 +539,10 @@ mod tests {
             "two",
         );
         git_in(dir.path(), &["checkout", "-q", "main"]);
-        git_in(dir.path(), &["merge", "--no-ff", "-q", "-m", "chore: 合并支线", "side"]);
+        git_in(
+            dir.path(),
+            &["merge", "--no-ff", "-q", "-m", "chore: 合并支线", "side"],
+        );
         git_in(dir.path(), &["revert", "--no-edit", "HEAD~1"]);
 
         let activity = build(dir.path(), &Filter::default()).expect("build");
@@ -607,7 +606,10 @@ mod tests {
 
         let activity = build(dir.path(), &Filter::default()).expect("build");
         assert_eq!(activity.commits, 1);
-        assert_eq!(activity.insertions, 0, "二进制的行数无从谈起，不能算成 0 之外的东西");
+        assert_eq!(
+            activity.insertions, 0,
+            "二进制的行数无从谈起，不能算成 0 之外的东西"
+        );
         assert_eq!(activity.files, 1);
         assert!(activity.binary_files >= 1, "二进制要单独报出来");
     }

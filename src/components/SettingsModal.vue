@@ -84,18 +84,26 @@ const grouped = computed(() => {
   return groups;
 });
 
+/**
+ * 改设置一律走 `prefsStore.patch`，并且把"怎么拼"写成函数交给它。
+ *
+ * 这里**不能**先读 `prefs.value` 再拼好整份交出去：连续改两项时，第二次读到的可能是
+ * 第一次还没落盘的那一份，于是第一次的改动被整份覆盖。拼接必须发生在队列里。
+ */
 function setPull(value: PullStrategy) {
-  prefsStore.patch({ pullStrategy: value });
+  prefsStore.patch(() => ({ pullStrategy: value }));
 }
 
 function setColumn(key: "refs" | "author" | "time" | "sha", value: boolean) {
-  if (!prefs.value) return;
-  prefsStore.patch({ columns: { ...prefs.value.columns, [key]: value } });
+  prefsStore.patch((current) => ({ columns: { ...current.columns, [key]: value } }));
 }
 
 function setPrefix(key: "feature" | "hotfix" | "release", value: string) {
-  if (!prefs.value) return;
-  prefsStore.patch({ flowPrefixes: { ...prefs.value.flowPrefixes, [key]: value } });
+  prefsStore.patch((current) => ({ flowPrefixes: { ...current.flowPrefixes, [key]: value } }));
+}
+
+function setAutoUpdate(value: boolean) {
+  prefsStore.patch(() => ({ autoUpdate: value }));
 }
 
 /**
@@ -143,21 +151,38 @@ const aiDraft = ref<AiConfig>({ endpoint: "", apiKey: "", model: "" });
 const AI_SAVE_DELAY_MS = 400;
 let aiTimer: ReturnType<typeof setTimeout> | undefined;
 
+/** 三栏逐字段相等。用来认出「这次 prefs 变化就是我自己刚存上去的那一份」 */
+function sameAi(a: AiConfig, b: AiConfig): boolean {
+  return a.endpoint === b.endpoint && a.apiKey === b.apiKey && a.model === b.model;
+}
+
+/**
+ * 把落盘的配置同步进三栏。
+ *
+ * **这是「重启后配置还在」的全部依据**：草稿的初值是空的，三栏只能从这里拿到值。
+ * 判据是"落盘值与草稿不同"——相等说明这次变化就是自己刚 patch 上去的那一份，再赋一次
+ * 只会把光标顶到行尾。有还没落盘的改动时不抢：那 400ms 里草稿才是最新的。
+ *
+ * 原来这条判断上还挂着一个 `document.activeElement === null`：WebView 里没聚焦时
+ * activeElement 是 body 而不是 null，所以那个分支一次都没进去过，三栏于是永远是空的。
+ */
 watch(
   () => prefs.value?.ai,
   (value) => {
-    // 落盘回来的值与草稿一致时才同步，避免自己 patch 回来的响应把光标位置冲掉
-    if (value && value.endpoint !== aiDraft.value.endpoint && document.activeElement === null) {
-      aiDraft.value = { ...value };
-    }
+    if (!value || sameAi(value, aiDraft.value)) return;
+    if (aiTimer !== undefined) return;
+    aiDraft.value = { ...value };
   },
   { immediate: true },
 );
 
 function saveAi() {
-  if (aiTimer !== undefined) clearTimeout(aiTimer);
+  if (aiTimer !== undefined) {
+    clearTimeout(aiTimer);
+    aiTimer = undefined;
+  }
   if (!prefs.value) return;
-  prefsStore.patch({ ai: { ...aiDraft.value } });
+  prefsStore.patch(() => ({ ai: { ...aiDraft.value } }));
 }
 
 function setAi(field: keyof AiConfig, value: string) {
@@ -170,7 +195,8 @@ function setAi(field: keyof AiConfig, value: string) {
 const aiIssue = computed(() => (prefs.value ? validateConfig(aiDraft.value) : null));
 
 onBeforeUnmount(() => {
-  if (aiTimer !== undefined) clearTimeout(aiTimer);
+  // 关窗时把还没到点的那次落盘补上：清掉定时器等于把用户刚敲进去的几个字符丢掉
+  if (aiTimer !== undefined) saveAi();
 });
 
 onMounted(async () => {
@@ -281,7 +307,7 @@ onMounted(async () => {
                   :value="prefs?.autoUpdate ?? true"
                   size="small"
                   :disabled="!prefs"
-                  @update:value="(value: boolean) => prefsStore.patch({ autoUpdate: value })"
+                  @update:value="setAutoUpdate"
                 />
                 <span class="muted">
                   关掉就完全不联网问版本。只查不装：发现新版只会告诉你，并把你领到 Releases 页。

@@ -99,15 +99,6 @@ function normalize(combo: string): string[] {
   return parts;
 }
 
-export function comboOf(event: KeyboardEvent): string {
-  const parts: string[] = [];
-  if (event.ctrlKey || event.metaKey) parts.push("ctrl");
-  if (event.shiftKey) parts.push("shift");
-  if (event.altKey) parts.push("alt");
-  parts.push(event.key.toLowerCase());
-  return parts.join("+");
-}
-
 /**
  * 事件是不是这条快捷键。数字键与字母键用 `event.key` 比，
  * 所以 `Ctrl+1` 与 `1` 天然区分得开。
