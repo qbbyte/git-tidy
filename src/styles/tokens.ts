@@ -188,7 +188,7 @@ export const FONT_MONO = [
 
 /** 圆角：控件一个小、卡片一个大。超过这两个值在密集列表里会显得松垮 */
 export const RADIUS_CONTROL = "6px";
-export const RADIUS_CARD = "10px";
+export const RADIUS_CARD = "6px";
 
 /**
  * 提交列表的行高。
@@ -216,6 +216,6 @@ export function installTokens(target: Document = document): void {
   const style = target.createElement("style");
   // data-* 让调试时在 devtools 里一眼认出这是 token 表而不是随手写的样式
   style.setAttribute("data-git-tidy-tokens", "");
-  style.textContent = `:root {\n${declarations}\n}`;
+  style.textContent = `:root {\n${declarations}\n--font-mono: ${FONT_MONO};\n}`;
   target.head.appendChild(style);
 }

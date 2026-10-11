@@ -115,50 +115,20 @@ check(
   COMMIT_LAYOUT.listMax + DIVIDER_TOTAL + COMMIT_LAYOUT.diffMin + COMMIT_LAYOUT.formMin,
 );
 
-// ---- 外壳：主区得为「窄布局最挤的那一档」留够位置 ----
+// ---- 外壳：n-layout 管侧栏与主区，不再手写宽度预算 ----
 //
-// 窄布局下左区只剩差异栏（下限 diffMinNarrow）加表单栏，再算上 .content 的左右内边距。
-// 给 .main 这个下限是**侧栏让位的唯一办法**：只写 `flex: 0 1 auto` 没用——.sider 的
-// 基准来自 width、.main 的基准是 0%，两者之和永远小于窗口宽度，永远没有负富余可分。
-//
-// 这两个检查刻意用**从 CSS 解析出来的值**而不是常量：这样上面那条一旦漂了，
-// 这里会接着告诉你"后果是什么"（主区该留多少也跟着变了），而不只是指出某个数不对。
+// 改用 n-layout-sider 后，侧栏宽度（280px）与折叠态（0px）由 NaiveUI 组件管理，
+// 「最小窗口装不装得下」由 n-layout 的响应式行为兜底（窗口窄时侧栏可折叠收起）。
+// 这里只保留 .content 内边距的一致性检查。
 const contentPadding = horizontalTotal(decl(rule(app, ".content", "App.vue"), "padding"));
-const cssDiffMinNarrow = px(
-  decl(rule(commit, ".pane.narrow .preview-pane", "CommitView.vue"), "min-width"),
-);
-const mainMin = px(decl(rule(app, ".main", "App.vue"), "min-width"));
+check("内容区左右内边距 = 32px（16px × 2）", contentPadding, 32);
 
-check(
-  "主区下限 = 窄布局差异栏 + 表单栏 + 内容区左右内边距",
-  mainMin,
-  cssDiffMinNarrow + cssFormMin + contentPadding,
-);
-
-// ---- 整壳：最小窗口下不能溢出 ----
-const siderMin = px(decl(rule(app, ".sider", "App.vue"), "min-width"));
-const siderDivider = rule(app, ".sider-divider", "App.vue");
-const siderDividerTotal =
-  px(decl(siderDivider, "width")) + horizontalTotal(decl(siderDivider, "margin"));
-
-const shellMin = siderMin + siderDividerTotal + mainMin;
-if (shellMin > windowMinWidth) {
-  failed += 1;
-  console.log(
-    `FAIL 最小窗口装不下：侧栏 ${siderMin} + 分隔条 ${siderDividerTotal} + 主区 ${mainMin} = ${shellMin} > 窗口下限 ${windowMinWidth}`,
-  );
-} else {
-  console.log(`ok   最小窗口 ${windowMinWidth} 装得下整壳（最少要 ${shellMin}）`);
-}
-
-// ---- 数字都摆出来，改宽度的人一眼能看到自己动了什么 ----
 console.log(
   [
     "",
     "提交页宽度预算：",
     `  三栏阈值 ${COMMIT_THREE_PANE_MIN}  = 清单上限 ${COMMIT_LAYOUT.listMax} + 分隔条 ${DIVIDER_TOTAL} + 差异栏 ${COMMIT_LAYOUT.diffMin} + 表单栏 ${COMMIT_LAYOUT.formMin}`,
-    `  主区下限 ${mainMin}  = 窄布局差异栏 ${COMMIT_LAYOUT.diffMinNarrow} + 表单栏 ${COMMIT_LAYOUT.formMin} + 内边距 ${contentPadding}`,
-    `  窗口下限 ${windowMinWidth}  ≥ 侧栏 ${siderMin} + 分隔条 ${siderDividerTotal} + 主区 ${mainMin} = ${shellMin}`,
+    `  外壳由 n-layout 管理，侧栏可折叠（280px ↔ 0px）`,
   ].join("\n"),
 );
 

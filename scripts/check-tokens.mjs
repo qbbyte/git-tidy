@@ -21,6 +21,8 @@ for (const m of tokensSrc.matchAll(/^\s{2}(\w+):\s*"#[0-9a-fA-F]{3,8}",/gm)) {
 }
 
 const declared = new Set([...defined].map(toKebab));
+// --font-mono 由 installTokens 单独注入，不在 tokens 对象里
+declared.add("font-mono");
 
 function walk(dir) {
   const out = [];
