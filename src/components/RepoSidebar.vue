@@ -188,9 +188,26 @@ function treeNodeProps(option: TreeOption) {
   const t = (option as Record<string, unknown>)._type as string | undefined;
   const gitRef = (option as Record<string, unknown>)._ref as GitRef | undefined;
   if ((t === "branch" || t === "remote-branch") && gitRef) {
-    return { onContextmenu: (e: MouseEvent) => openBranchMenu(e, gitRef) };
+    return {
+      onContextmenu: (e: MouseEvent) => openBranchMenu(e, gitRef),
+      onDblclick: () => onBranchDblClick(gitRef),
+    };
   }
   return {};
+}
+
+async function onBranchDblClick(gitRef: GitRef) {
+  const currentBranch = repos.repoState?.branch ?? null;
+  if (gitRef.name === currentBranch) return;
+  if (repos.workingFiles.length > 0) {
+    dialog.warning({
+      title: "工作区有改动",
+      content: `工作区还有 ${repos.workingFiles.length} 处改动，切换分支会被拒绝。`,
+      positiveText: "知道了",
+    });
+    return;
+  }
+  await writes.switchBranch(gitRef.name, false);
 }
 
 /* ---- 仓库行操作 ---- */
