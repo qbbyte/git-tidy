@@ -20,7 +20,6 @@ import RepoSidebar from "@/components/RepoSidebar.vue";
 import SettingsModal from "@/components/SettingsModal.vue";
 import AddRepoModal from "@/components/AddRepoModal.vue";
 import NewBranchModal from "@/components/NewBranchModal.vue";
-import RefsModal from "@/components/RefsModal.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { usePrefsStore as usePrefs } from "@/stores/prefs";
@@ -44,6 +43,7 @@ import GitCommitIcon from "@vicons/tabler/es/GitCommit";
 import ReportIcon from "@vicons/tabler/es/DeviceAnalytics";
 import ChangelogIcon from "@vicons/tabler/es/ClipboardList";
 import GitBranchIcon from "@vicons/tabler/es/GitBranch";
+import BranchNavIcon from "@vicons/tabler/es/GitBranch";
 import DownloadIcon from "@vicons/tabler/es/Download";
 import UploadIcon from "@vicons/tabler/es/Upload";
 
@@ -54,7 +54,6 @@ const writes = useWriteStore();
 const settingsVisible = ref(false);
 const addRepoVisible = ref(false);
 const newBranchVisible = ref(false);
-const refsVisible = ref(false);
 
 const pushing = ref(false);
 
@@ -87,6 +86,7 @@ const activeTab = computed(() => {
   if (route.name === "files") return "files";
   if (route.name === "report") return "report";
   if (route.name === "changelog") return "changelog";
+  if (route.name === "branches") return "branches";
   return "history";
 });
 const commitTabEnabled = computed(() => repos.canCommit);
@@ -155,7 +155,7 @@ const shortcutContext: ShortcutContext = {
 };
 
 const TAB_ROUTE: Record<string, string> = {
-  历史: "history", 文件: "files", 提交: "commit", 报告: "report", CHANGELOG: "changelog",
+  历史: "history", 文件: "files", 提交: "commit", 报告: "report", CHANGELOG: "changelog", 分支: "branches",
 };
 
 function onKeyDown(event: KeyboardEvent) {
@@ -258,6 +258,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
                 <n-icon :component="ChangelogIcon" size="16" />
                 <span>CHANGELOG</span>
               </button>
+              <button
+                class="nav-item"
+                :class="{ active: activeTab === 'branches' }"
+                @click="go('branches')"
+              >
+                <n-icon :component="BranchNavIcon" size="16" />
+                <span>分支</span>
+              </button>
             </nav>
 
             <!-- 仓库上下文 -->
@@ -302,7 +310,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
           <!-- 下方：侧栏 + 主区 -->
           <div class="body">
             <aside class="sider-wrap">
-              <repo-sidebar @open-settings="settingsVisible = true" @open-add-repo="addRepoVisible = true" @open-new-branch="newBranchVisible = true" @open-branch-manager="refsVisible = true" />
+              <repo-sidebar @open-settings="settingsVisible = true" @open-add-repo="addRepoVisible = true" @open-new-branch="newBranchVisible = true" @open-branch-manager="$router.push({ name: 'branches' })" />
             </aside>
 
             <main class="main-area">
@@ -359,7 +367,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
         <settings-modal v-model:show="settingsVisible" />
         <add-repo-modal v-model:show="addRepoVisible" />
         <new-branch-modal v-model:show="newBranchVisible" />
-        <refs-modal v-model:show="refsVisible" @new-branch="newBranchVisible = true" />
       </n-message-provider>
     </n-dialog-provider>
   </n-config-provider>

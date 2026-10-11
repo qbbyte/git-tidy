@@ -4,6 +4,7 @@ import CommitView from "@/views/CommitView.vue";
 import FilesView from "@/views/FilesView.vue";
 import ReportView from "@/views/ReportView.vue";
 import ChangelogView from "@/views/ChangelogView.vue";
+import BranchesView from "@/views/BranchesView.vue";
 
 /**
  * 用 hash 模式：Tauri 生产包走自定义协议加载本地文件，history 模式下深链刷新会命中
@@ -21,5 +22,6 @@ export const router = createRouter({
     { path: "/commit", name: "commit", component: CommitView },
     { path: "/report", name: "report", component: ReportView },
     { path: "/changelog", name: "changelog", component: ChangelogView },
+    { path: "/branches", name: "branches", component: BranchesView },
   ],
 });
