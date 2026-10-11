@@ -6,6 +6,7 @@ import {
   NButton,
   NConfigProvider,
   NDialogProvider,
+  NDropdown,
   NMessageProvider,
   NProgress,
   NSpace,
@@ -13,6 +14,7 @@ import {
   dateZhCN,
   zhCN,
   type GlobalThemeOverrides,
+  type DropdownOption,
 } from "naive-ui";
 import RepoSidebar from "@/components/RepoSidebar.vue";
 import RefsModal from "@/components/RefsModal.vue";
@@ -42,6 +44,8 @@ import GitCommitIcon from "@vicons/tabler/es/GitCommit";
 import ReportIcon from "@vicons/tabler/es/DeviceAnalytics";
 import ChangelogIcon from "@vicons/tabler/es/ClipboardList";
 import GitBranchIcon from "@vicons/tabler/es/GitBranch";
+import DownloadIcon from "@vicons/tabler/es/Download";
+import UploadIcon from "@vicons/tabler/es/Upload";
 
 const route = useRoute();
 const router = useRouter();
@@ -50,6 +54,8 @@ const writes = useWriteStore();
 const settingsVisible = ref(false);
 const addRepoVisible = ref(false);
 const newBranchVisible = ref(false);
+
+const pushing = ref(false);
 
 watch(
   () => repos.canCommit,
@@ -100,8 +106,40 @@ const branchName = computed(() => {
 const interruptTitle = computed(() => INTERRUPT_LABEL[repos.interrupt]);
 const interruptExit = computed(() => INTERRUPT_EXIT[repos.interrupt]);
 
+const syncBranch = computed(() => repos.repoState?.branch ?? null);
+const syncAhead = computed(() => repos.repoState?.ahead ?? 0);
+const syncBehind = computed(() => repos.repoState?.behind ?? 0);
+const syncUpstream = computed(() => repos.repoState?.upstream ?? null);
+const syncRemote = computed(() => {
+  const remote = repos.refs.filter((item) => item.kind === "remote")[0]?.name.split("/")[0];
+  return remote ?? "origin";
+});
+
+const pullOptions: DropdownOption[] = [
+  { label: "快进合并", key: "ff_only" },
+  { label: "变基", key: "rebase" },
+  { type: "divider", key: "d" },
+  { label: "仅抓取", key: "fetch" },
+];
+
 function go(name: string | number) {
   router.push({ name: String(name) });
+}
+
+function onPullSelect(key: string) {
+  if (key === "fetch") void writes.fetch(syncRemote.value);
+  else void writes.pull(syncRemote.value, key as "ff_only" | "rebase");
+}
+
+async function doPush() {
+  const name = syncBranch.value;
+  if (!name) return;
+  pushing.value = true;
+  try {
+    await writes.push(syncRemote.value, name, !syncUpstream.value, false);
+  } finally {
+    pushing.value = false;
+  }
 }
 
 const shortcutContext: ShortcutContext = {
@@ -233,6 +271,31 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 
             <!-- 右侧动作 -->
             <div class="actions">
+              <n-dropdown trigger="click" :options="pullOptions" :disabled="!writes.canWrite" @select="onPullSelect">
+                <n-button
+                  size="small"
+                  quaternary
+                  :disabled="!writes.canWrite"
+                  :loading="writes.syncAction === 'pull' || writes.syncAction === 'fetch'"
+                  :title="syncBehind > 0 ? `${syncBehind} 个提交待拉取` : '拉取远程更新'"
+                >
+                  <template #icon><n-icon :component="DownloadIcon" size="16" /></template>
+                  拉取
+                  <span v-if="syncBehind > 0" class="sync-badge">{{ syncBehind }}</span>
+                </n-button>
+              </n-dropdown>
+              <n-button
+                size="small"
+                quaternary
+                :disabled="!writes.canWrite || !syncBranch"
+                :loading="pushing"
+                :title="syncAhead > 0 ? `${syncAhead} 个提交待推送` : '推送'"
+                @click="doPush"
+              >
+                <template #icon><n-icon :component="UploadIcon" size="16" /></template>
+                推送
+                <span v-if="syncAhead > 0" class="sync-badge accent">{{ syncAhead }}</span>
+              </n-button>
               <n-button
                 size="small"
                 quaternary
@@ -436,6 +499,27 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
   align-items: center;
   gap: 4px;
   flex: none;
+}
+
+.sync-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 2px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  background: var(--surface-hover);
+}
+
+.sync-badge.accent {
+  color: var(--accent);
+  background: var(--surface-selected);
 }
 
 /* 下方布局 */
