@@ -184,19 +184,22 @@ function renderTreePrefix({ option }: { option: TreeOption }) {
   return h(NIcon, { size: 14, class: "tree-prefix" }, { default: () => h(icon as never) });
 }
 
-function treeNodeProps(option: TreeOption) {
+/* naive-ui 的 node-props 回调参数是 `{ option }`，不是 option 本身。
+   之前直接把参数当 option 用，`_type` / `_ref` 永远是 undefined，
+   这里返回的事件一个都没挂上，双击与右键菜单自然都不响应。 */
+function treeNodeProps({ option }: { option: TreeOption }) {
   const t = (option as Record<string, unknown>)._type as string | undefined;
   const gitRef = (option as Record<string, unknown>)._ref as GitRef | undefined;
   if ((t === "branch" || t === "remote-branch") && gitRef) {
     return {
       onContextmenu: (e: MouseEvent) => openBranchMenu(e, gitRef),
-      onDblclick: () => onBranchDblClick(gitRef),
+      onDblclick: () => void confirmSwitch(gitRef),
     };
   }
   return {};
 }
 
-async function onBranchDblClick(gitRef: GitRef) {
+async function confirmSwitch(gitRef: GitRef) {
   const currentBranch = repos.repoState?.branch ?? null;
   if (gitRef.name === currentBranch) return;
   if (repos.workingFiles.length > 0) {
@@ -207,7 +210,13 @@ async function onBranchDblClick(gitRef: GitRef) {
     });
     return;
   }
-  await writes.switchBranch(gitRef.name, false);
+  dialog.warning({
+    title: "切换分支",
+    content: `切换到分支 ${gitRef.name}？`,
+    positiveText: "切换",
+    negativeText: "取消",
+    onPositiveClick: () => void writes.switchBranch(gitRef.name, false),
+  });
 }
 
 /* ---- 仓库行操作 ---- */
@@ -525,7 +534,6 @@ function toggleExpandAll() {
 
 .repo-card.active {
   background: var(--surface-selected);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .repo-icon {

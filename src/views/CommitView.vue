@@ -648,8 +648,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 
 /* 选中态要够显眼：中间那一栏画的是"哪一个文件的哪一半"，认错了就是对着别的文件做决定 */
 .file-row.picked {
-  background: var(--surface-hover);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--surface-selected);
 }
 
 /**
