@@ -1,19 +1,18 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, h, reactive, ref } from "vue";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { GitTidyError } from "@/api/client";
 import { openTerminal } from "@/api/prefs";
 import {
   NButton,
-  NCollapse,
-  NCollapseItem,
   NDropdown,
   NEmpty,
   NIcon,
   NInput,
   NScrollbar,
-  NTag,
+  NTree,
   type DropdownOption,
+  type TreeOption,
   useDialog,
 } from "naive-ui";
 import Settings from "@vicons/tabler/es/Settings";
@@ -22,40 +21,30 @@ import GitBranchIcon from "@vicons/tabler/es/GitBranch";
 import CloudIcon from "@vicons/tabler/es/Cloud";
 import TagIcon from "@vicons/tabler/es/Tag";
 import DotsIcon from "@vicons/tabler/es/DotsVertical";
+import MonitorIcon from "@vicons/tabler/es/DeviceDesktop";
+import CheckIcon from "@vicons/tabler/es/Check";
+import PlusIcon from "@vicons/tabler/es/Plus";
+import RefreshIcon from "@vicons/tabler/es/Refresh";
+import ListIcon from "@vicons/tabler/es/List";
 import { useReposStore } from "@/stores/repos";
 import { INTERRUPT_LABEL } from "@/api/refs";
 import type { Repo } from "@/api/repo";
-
 import { useWriteStore } from "@/stores/write";
 import type { Ref as GitRef } from "@/api/refs";
-/**
- * 常驻左栏（参考 UGit 风格）：
- * - 仓库列表：卡片式行，彩色图标 + 仓库名 + 状态指示
- * - 分支/标签：NCollapse 折叠区
- * - 当前仓库信息与操作面板
- */
+
 const repos = useReposStore();
+const writes = useWriteStore();
+const dialog = useDialog();
 
 const emit = defineEmits<{
   (e: "open-settings"): void;
   (e: "open-add-repo"): void;
+  (e: "open-new-branch"): void;
 }>();
 
 const editing = ref<{ id: number; name: string } | null>(null);
-const writes = useWriteStore();
-const dialog = useDialog();
-
-/* ---- 分支右键菜单 ---- */
-const branchMenu = reactive({ show: false, x: 0, y: 0, ref: null as GitRef | null });
-const branchRename = ref<{ from: string; to: string } | null>(null);
-
-const remoteName = computed(() => {
-  const remote = remoteBranches.value[0]?.name.split("/")[0];
-  return remote ?? "origin";
-});
 const repoQuery = ref("");
-/** 当前展开的折叠面板 */
-const activeSections = ref<string[]>(["branches"]);
+const branchFilter = ref("");
 
 const SEARCH_THRESHOLD = 8;
 
@@ -99,6 +88,110 @@ const localBranches = computed(() => repos.refs.filter((r) => r.kind === "branch
 const remoteBranches = computed(() => repos.refs.filter((r) => r.kind === "remote"));
 const tags = computed(() => repos.refs.filter((r) => r.kind === "tag"));
 
+const remoteName = computed(() => {
+  const remote = remoteBranches.value[0]?.name.split("/")[0];
+  return remote ?? "origin";
+});
+
+/* ---- 树展开键 ---- */
+const treeExpandedKeys = ref<string[]>(["group:local", "group:remote", "group:tags"]);
+
+/* ---- 树数据 ---- */
+const treeOptions = computed<TreeOption[]>(() => {
+  const q = branchFilter.value.trim().toLowerCase();
+  const match = (r: GitRef) => !q || r.name.toLowerCase().includes(q);
+  const currentBranch = repos.repoState?.branch ?? null;
+  const result: TreeOption[] = [];
+
+  const localFiltered = localBranches.value.filter(match);
+  result.push({
+    key: "group:local",
+    label: `本地（${localFiltered.length}）`,
+    _type: "group-local",
+    children: localFiltered.map((r) => ({
+      key: `branch:${r.fullName}`,
+      label: r.name,
+      isLeaf: true,
+      _type: "branch",
+      _ref: r,
+      _current: r.name === currentBranch,
+    }) as TreeOption),
+  });
+
+  const remoteFiltered = remoteBranches.value.filter(match);
+  if (remoteFiltered.length) {
+    const groups: Record<string, GitRef[]> = {};
+    for (const r of remoteFiltered) {
+      const remote = r.name.split("/")[0];
+      (groups[remote] ??= []).push(r);
+    }
+    result.push({
+      key: "group:remote",
+      label: `远端（${remoteFiltered.length}）`,
+      _type: "group-remote",
+      children: Object.entries(groups).map(([remote, refs]) => ({
+        key: `remote-sub:${remote}`,
+        label: remote,
+        _type: "remote-sub",
+        children: refs.map((r) => ({
+          key: `remote-branch:${r.fullName}`,
+          label: r.name.split("/").slice(1).join("/"),
+          isLeaf: true,
+          _type: "remote-branch",
+          _ref: r,
+        }) as TreeOption),
+      }) as TreeOption),
+    });
+  }
+
+  const tagFiltered = tags.value.filter(match);
+  if (tagFiltered.length) {
+    result.push({
+      key: "group:tags",
+      label: `标签（${tagFiltered.length}）`,
+      _type: "group-tags",
+      children: tagFiltered.map((r) => ({
+        key: `tag:${r.fullName}`,
+        label: r.name,
+        isLeaf: true,
+        _type: "tag-node",
+        _ref: r,
+      }) as TreeOption),
+    });
+  }
+
+  return result;
+});
+
+/* ---- 树渲染 ---- */
+function renderTreePrefix({ option }: { option: TreeOption }) {
+  const t = (option as Record<string, unknown>)._type as string | undefined;
+  const iconMap: Record<string, unknown> = {
+    "group-local": MonitorIcon,
+    "group-remote": CloudIcon,
+    "group-tags": TagIcon,
+    "remote-sub": CloudIcon,
+    branch: GitBranchIcon,
+    "remote-branch": GitBranchIcon,
+    "tag-node": TagIcon,
+  };
+  const icon = iconMap[t ?? ""];
+  if (!icon) return undefined;
+  if (t === "branch" && (option as Record<string, unknown>)._current) {
+    return h(NIcon, { size: 14, class: "tree-prefix current" }, { default: () => h(CheckIcon) });
+  }
+  return h(NIcon, { size: 14, class: "tree-prefix" }, { default: () => h(icon as never) });
+}
+
+function treeNodeProps(option: TreeOption) {
+  const t = (option as Record<string, unknown>)._type as string | undefined;
+  const gitRef = (option as Record<string, unknown>)._ref as GitRef | undefined;
+  if ((t === "branch" || t === "remote-branch") && gitRef) {
+    return { onContextmenu: (e: MouseEvent) => openBranchMenu(e, gitRef) };
+  }
+  return {};
+}
+
 /* ---- 仓库行操作 ---- */
 function repoActions(repo: Repo): DropdownOption[] {
   return [
@@ -135,20 +228,23 @@ function saveRename() {
   repos.rename(id, name);
 }
 
-function branchMenuOptions(ref: GitRef): DropdownOption[] {
-  const isCurrent = ref.name === (repos.repoState?.branch ?? null);
+/* ---- 分支右键菜单 ---- */
+const branchMenu = reactive({ show: false, x: 0, y: 0, ref: null as GitRef | null });
+
+function branchMenuOptions(gitRef: GitRef): DropdownOption[] {
+  const isCurrent = gitRef.name === (repos.repoState?.branch ?? null);
   const opts: DropdownOption[] = [];
   if (!isCurrent) opts.push({ label: "切换到此分支", key: "switch", disabled: !writes.canWrite });
-  if (ref.upstream && !ref.upstreamGone) opts.push({ label: "强推（lease）", key: "force-push", disabled: !writes.canWrite });
+  if (gitRef.upstream && !gitRef.upstreamGone) opts.push({ label: "强推（lease）", key: "force-push", disabled: !writes.canWrite });
   opts.push({ label: "重命名", key: "rename", disabled: !writes.canWrite || isCurrent });
   opts.push({ type: "divider", key: "d1" });
   opts.push({ label: "删除", key: "delete", disabled: !writes.canWrite || isCurrent });
   return opts;
 }
 
-function openBranchMenu(event: MouseEvent, ref: GitRef) {
+function openBranchMenu(event: MouseEvent, gitRef: GitRef) {
   event.preventDefault();
-  branchMenu.ref = ref;
+  branchMenu.ref = gitRef;
   branchMenu.x = event.clientX;
   branchMenu.y = event.clientY;
   branchMenu.show = true;
@@ -157,46 +253,56 @@ function openBranchMenu(event: MouseEvent, ref: GitRef) {
 function closeBranchMenu() { branchMenu.show = false; }
 
 async function onBranchMenuSelect(key: string) {
-  const ref = branchMenu.ref;
+  const target = branchMenu.ref;
   closeBranchMenu();
-  if (!ref) return;
+  if (!target) return;
   if (key === "switch") {
     if (repos.workingFiles.length > 0) {
       dialog.warning({ title: "工作区有改动", content: `工作区还有 ${repos.workingFiles.length} 处改动，切换分支会被拒绝。`, positiveText: "知道了" });
       return;
     }
-    await writes.switchBranch(ref.name, false);
+    await writes.switchBranch(target.name, false);
     return;
   }
-  if (key === "rename") { branchRename.value = { from: ref.name, to: ref.name }; return; }
+  if (key === "rename") {
+    const newName = ref(target.name);
+    dialog.create({
+      title: "重命名分支",
+      content: () => h(NInput, { value: newName.value, "onUpdate:value": (v: string) => (newName.value = v), size: "small", placeholder: "新分支名" }),
+      positiveText: "保存",
+      negativeText: "取消",
+      onPositiveClick: () => {
+        const trimmed = newName.value.trim();
+        if (trimmed && trimmed !== target.name) void writes.renameBranch(target.name, trimmed);
+      },
+    });
+    return;
+  }
   if (key === "force-push") {
     dialog.warning({
-      title: `强推 ${ref.name}？`, content: "远程被别人抢先推过时这次会失败（lease 保护）。",
+      title: `强推 ${target.name}？`, content: "远程被别人抢先推过时这次会失败（lease 保护）。",
       positiveText: "强推", negativeText: "算了",
-      onPositiveClick: () => void writes.push(remoteName.value, ref.name, false, true),
+      onPositiveClick: () => void writes.push(remoteName.value, target.name, false, true),
     }); return;
   }
   if (key === "delete") {
-    const probe = await writes.probeDeletable(ref.name);
+    const probe = await writes.probeDeletable(target.name);
     if (probe === null) return;
     dialog.warning({
-      title: `删除分支 ${ref.name}？`,
+      title: `删除分支 ${target.name}？`,
       content: probe.merged
         ? "已合并进别的分支，删除不会丢提交（reflog 里还找得回来）。"
         : `有 ${probe.unmerged ?? "?"} 个未合并的提交，删除会丢掉它们。`,
       positiveText: "删除", negativeText: "算了",
-      onPositiveClick: () => void writes.deleteBranch(ref.name, !probe.merged),
+      onPositiveClick: () => void writes.deleteBranch(target.name, !probe.merged),
     }); return;
   }
 }
 
-async function saveBranchRename() {
-  if (!branchRename.value) return;
-  const { from, to } = branchRename.value;
-  branchRename.value = null;
-  const trimmed = to.trim();
-  if (!trimmed || trimmed === from) return;
-  await writes.renameBranch(from, trimmed);
+/* ---- 工具栏 ---- */
+function toggleExpandAll() {
+  const allExpanded = treeExpandedKeys.value.length >= 3;
+  treeExpandedKeys.value = allExpanded ? [] : ["group:local", "group:remote", "group:tags"];
 }
 </script>
 
@@ -278,67 +384,46 @@ async function saveBranchRename() {
       </button>
     </div>
 
-    <!-- 分支 / 标签 -->
-    <n-collapse v-if="repos.currentId !== null" v-model:expanded-names="activeSections" :display-directive="'show'" arrow-placement="left" class="refs-collapse">
-      <n-collapse-item v-if="localBranches.length" name="branches">
-        <template #header>
-          <n-icon :component="GitBranchIcon" size="14" />
-          <span class="collapse-label">本地分支（{{ localBranches.length }}）</span>
-        </template>
-        <div class="ref-list">
-          <div
-            v-for="ref in localBranches"
-            :key="ref.fullName"
-            class="ref-item"
-            :class="{ current: repos.repoState?.branch === ref.name }"
-            @contextmenu="openBranchMenu($event, ref)"
-          >
-            <!-- 内联重命名 -->
-            <template v-if="branchRename && branchRename.from === ref.name">
-              <n-input
-                v-model:value="branchRename.to"
-                size="tiny"
-                placeholder="新分支名"
-                @keyup.enter="saveBranchRename"
-                @click.stop
-              />
-              <n-button size="tiny" type="primary" @click.stop="saveBranchRename">✓</n-button>
-              <n-button size="tiny" quaternary @click.stop="branchRename = null">✕</n-button>
-            </template>
-            <!-- 正常展示 -->
-            <template v-else>
-              <span class="ref-name">{{ ref.name }}</span>
-              <n-tag v-if="repos.repoState?.branch === ref.name" size="tiny" type="info" :bordered="false">HEAD</n-tag>
-              <span v-if="ref.ahead || ref.behind" class="ahead-behind">↑{{ ref.ahead ?? 0 }} ↓{{ ref.behind ?? 0 }}</span>
-            </template>
-          </div>
+    <!-- 分支 / 远端 / 标签树 -->
+    <div v-if="repos.currentId !== null" class="branch-panel">
+      <div class="branch-toolbar">
+        <span class="branch-toolbar-title">分支</span>
+        <div class="branch-toolbar-actions">
+          <n-button size="tiny" quaternary title="新建分支" @click="emit('open-new-branch')">
+            <template #icon><n-icon :component="PlusIcon" size="14" /></template>
+          </n-button>
+          <n-button size="tiny" quaternary title="刷新" @click="repos.refreshAll()">
+            <template #icon><n-icon :component="RefreshIcon" size="14" /></template>
+          </n-button>
+          <n-button size="tiny" quaternary title="展开/折叠全部" @click="toggleExpandAll">
+            <template #icon><n-icon :component="ListIcon" size="14" /></template>
+          </n-button>
+          <n-button size="tiny" quaternary title="设置" @click="emit('open-settings')">
+            <template #icon><n-icon :component="Settings" size="14" /></template>
+          </n-button>
         </div>
-      </n-collapse-item>
-
-      <n-collapse-item v-if="remoteBranches.length" name="remote">
-        <template #header>
-          <n-icon :component="CloudIcon" size="14" />
-          <span class="collapse-label">远程分支（{{ remoteBranches.length }}）</span>
-        </template>
-        <div class="ref-list">
-          <div v-for="ref in remoteBranches" :key="ref.fullName" class="ref-item remote">
-            <span class="ref-name">{{ ref.name }}</span>
-          </div>
-        </div>
-      </n-collapse-item>
-
-      <n-collapse-item v-if="tags.length" name="tags">
-        <template #header>
-          <n-icon :component="TagIcon" size="14" />
-          <span class="collapse-label">标签（{{ tags.length }}）</span>
-        </template>
-        <div class="ref-list">
-          <div v-for="ref in tags" :key="ref.fullName" class="ref-item tag">
-            <span class="ref-name">{{ ref.name }}</span>
-          </div>
-        </div>
-      </n-collapse-item>
-    </n-collapse>
+      </div>
+      <div class="branch-filter">
+        <n-input v-model:value="branchFilter" size="tiny" clearable placeholder="过滤分支…" />
+      </div>
+      <div class="branch-tree-wrap">
+        <n-tree
+          :data="treeOptions"
+          :expanded-keys="treeExpandedKeys"
+          @update:expanded-keys="treeExpandedKeys = $event"
+          :render-prefix="renderTreePrefix"
+          :node-props="treeNodeProps"
+          block-line
+          :selectable="false"
+          key-field="key"
+          label-field="label"
+          children-field="children"
+          size="small"
+          :indent="16"
+          :animated="false"
+        />
+      </div>
+    </div>
 
     </n-scrollbar>
 
@@ -362,6 +447,7 @@ async function saveBranchRename() {
     />
   </aside>
 </template>
+
 <style scoped>
 .side {
   display: flex;
@@ -508,52 +594,8 @@ async function saveBranchRename() {
 
 .muted { color: var(--text-2); opacity: 0.7; }
 
-/* ---- 折叠区 ---- */
-.refs-collapse { margin: 8px 0 0; }
-.refs-collapse :deep(.n-collapse-item__header) {
-  padding: 4px 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-2);
-  align-items: center;
-}
-.refs-collapse :deep(.n-collapse-item__header:hover) {
-  color: var(--text-1);
-}
-.collapse-label { margin-left: 4px; }
-.refs-collapse :deep(.n-collapse-item__content-inner) {
-  padding-top: 2px;
-}
 
 /* 引用列表 */
-.ref-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 0 4px 4px;
-}
-.ref-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border-radius: 5px;
-  font-size: 12px;
-  cursor: default;
-}
-.ref-item:hover { background: var(--surface-hover); }
-.ref-item.current { background: var(--surface-selected); box-shadow: inset 2px 0 0 var(--accent); }
-.ref-item .ref-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-2);
-}
-.ref-item.remote .ref-name { color: var(--text-3); }
-.ahead-behind { font-size: 10px; color: var(--text-3); }
-
 /* ---- 操作面板 ---- */
 
 /* ---- 底栏 ---- */
@@ -563,5 +605,59 @@ async function saveBranchRename() {
   padding: 6px 2px;
   border-top: 1px solid var(--border-soft);
   background: var(--surface-app);
+}
+
+/* ---- 分支面板 ---- */
+.branch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+.branch-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 2px;
+}
+.branch-toolbar-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.branch-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.branch-filter { padding: 0 6px 2px; }
+
+.branch-tree-wrap {
+  padding: 0 2px;
+}
+
+.branch-tree-wrap :deep(.n-tree) {
+  font-size: 12px;
+}
+.branch-tree-wrap :deep(.n-tree-node-content) {
+  border-radius: 4px;
+  padding: 1px 4px;
+  transition: background 80ms ease;
+}
+.branch-tree-wrap :deep(.n-tree-node-content:hover) {
+  background: var(--surface-hover);
+}
+.branch-tree-wrap :deep(.n-tree-node--pending .n-tree-node-content) {
+  background: var(--surface-hover);
+}
+.branch-tree-wrap :deep(.tree-prefix) {
+  color: var(--text-3);
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+.branch-tree-wrap :deep(.tree-prefix.current) {
+  color: var(--accent);
 }
 </style>

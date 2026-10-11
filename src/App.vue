@@ -300,7 +300,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
           <!-- 下方：侧栏 + 主区 -->
           <div class="body">
             <aside class="sider-wrap">
-              <repo-sidebar @open-settings="settingsVisible = true" @open-add-repo="addRepoVisible = true" />
+              <repo-sidebar @open-settings="settingsVisible = true" @open-add-repo="addRepoVisible = true" @open-new-branch="newBranchVisible = true" />
             </aside>
 
             <main class="main-area">
