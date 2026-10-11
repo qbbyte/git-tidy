@@ -23,6 +23,7 @@ import TrashIcon from "@vicons/tabler/es/Trash";
 import GitBranchIcon from "@vicons/tabler/es/GitBranch";
 import NewBranchModal from "@/components/NewBranchModal.vue";
 import { useReposStore } from "@/stores/repos";
+import { showCommit } from "@/api/commit";
 import { useWriteStore } from "@/stores/write";
 
 const repos = useReposStore();
@@ -52,19 +53,27 @@ async function fetchBranchDetails() {
   if (repoId === null) return;
   loading.value = true;
   try {
-    // 预留：后端实现后改为真实调用
-    // const data = await call<BranchDetail[]>("refs_branch_details", { id: repoId });
-    // branchDetails.value = data;
-
     const branches = repos.refs.filter((r) => r.kind === "branch");
-    branchDetails.value = branches.map((b) => ({
-      name: b.name,
-      upstream: b.upstream,
-      target: b.target,
-      time: 0,
-      authorName: "",
-      upstreamGone: b.upstreamGone,
-    }));
+    const results = await Promise.all(
+      branches.map(async (b) => {
+        let time = 0;
+        let authorName = "";
+        try {
+          const commit = await showCommit(repoId, b.target);
+          time = commit.time;
+          authorName = commit.authorName;
+        } catch { /* 读取失败用占位 */ }
+        return {
+          name: b.name,
+          upstream: b.upstream,
+          target: b.target,
+          time,
+          authorName,
+          upstreamGone: b.upstreamGone,
+        } satisfies BranchDetail;
+      }),
+    );
+    branchDetails.value = results;
   } finally {
     loading.value = false;
   }
