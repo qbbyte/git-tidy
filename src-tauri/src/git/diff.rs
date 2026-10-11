@@ -145,23 +145,65 @@ pub fn read(
         args.push(sha.to_string());
     }
     args.push("--".to_string());
-    // `:(literal)`：文件名里带 `*`、`[`、`?` 的仓库真存在（比如截图导出），当通配传下去
-    // 就会比到别的文件上——画错文件比画不出来严重得多
-    args.push(format!(":(literal){path}"));
-    if let Some(old_path) = old_path {
-        if old_path != path {
-            args.push(format!(":(literal){old_path}"));
-        }
-    }
+    args.extend(pathspecs(path, old_path));
     let out = process::run_bytes(Some(repo), &process::strs(&args), &[])?.expect_success()?;
     assemble(repo, path, &out)
 }
 
+/// 要传给 git 的路径位。
+///
+/// `:(literal)`：文件名里带 `*`、`[`、`?` 的仓库真存在（比如截图导出），当通配传下去
+/// 就会比到别的文件上——画错文件比画不出来严重得多。
+///
+/// 改名**必须把新旧两个路径一起给**：只给新路径时那一端不在 diff 的候选集里，
+/// git 配不成一对，只会给你"整个文件新增"，几千行的文件因此看起来全变了。
+fn pathspecs(path: &str, old_path: Option<&str>) -> Vec<String> {
+    let mut out = vec![format!(":(literal){path}")];
+    if let Some(old_path) = old_path {
+        if old_path != path {
+            out.push(format!(":(literal){old_path}"));
+        }
+    }
+    out
+}
+
 /// 工作区里某个文件的未暂存改动（索引 → 工作区）。
 ///
-/// 与 `read` 走同一个解析器与同一个降级阀值，只是对比对象从"提交对父"换成"索引对工作区"。
 /// 逐行暂存的界面就靠它：没有这一份就看不见可分段的内容。
-pub fn read_worktree(repo: &Path, path: &str, ignore_white_space: bool) -> Result<Diff, GitError> {
+pub fn read_worktree(
+    repo: &Path,
+    path: &str,
+    old_path: Option<&str>,
+    ignore_white_space: bool,
+) -> Result<Diff, GitError> {
+    worktree_side(repo, path, old_path, ignore_white_space, false)
+}
+
+/// 已暂存的那一半（HEAD → 索引）。
+///
+/// 与 `read_worktree` 是同一次改动的两半：一个文件两边都有改动时状态是 `MM`，
+/// 提交页的「已暂存」列画这一份（这次要落盘的内容），「变更」列画那一份（还没 `git add`
+/// 的后续改动）。两份合起来才是工作区的全部改动，所以不能拿一个顶两个。
+pub fn read_staged(
+    repo: &Path,
+    path: &str,
+    old_path: Option<&str>,
+    ignore_white_space: bool,
+) -> Result<Diff, GitError> {
+    worktree_side(repo, path, old_path, ignore_white_space, true)
+}
+
+/// 两个方向共用一趟，`--cached` 是唯一差别。
+///
+/// **不能各写一份**：解析与降级阈值必须一字不差，否则同一个文件在两列里会画出两种样子
+/// （一列给逐行、另一列说"文件太大"），而用户没有理由相信其中哪一个。
+fn worktree_side(
+    repo: &Path,
+    path: &str,
+    old_path: Option<&str>,
+    ignore_white_space: bool,
+    staged: bool,
+) -> Result<Diff, GitError> {
     let mut args: Vec<String> = vec![
         "diff".to_string(),
         "--no-color".to_string(),
@@ -169,11 +211,16 @@ pub fn read_worktree(repo: &Path, path: &str, ignore_white_space: bool) -> Resul
         "--no-ext-diff".to_string(),
         CONTEXT_LINES.to_string(),
     ];
+    if staged {
+        // `--cached` 是把"新"的那一侧从工作区换成索引，比较基准仍是 HEAD；
+        // 仓库还没有第一个提交时 git 拿空树当基准，不必特判
+        args.push("--cached".to_string());
+    }
     if ignore_white_space {
         args.push("--ignore-all-space".to_string());
     }
     args.push("--".to_string());
-    args.push(format!(":(literal){path}"));
+    args.extend(pathspecs(path, old_path));
     let out = process::run_bytes(Some(repo), &process::strs(&args), &[])?.expect_success()?;
     assemble(repo, path, &out)
 }
@@ -930,6 +977,100 @@ mod tests {
 
         // 空暂存区要给出空串而不是报错：调用方（提交表单）自己提示「先 git add」
         assert_eq!(staged_text(dir.path()).expect("暂存区 diff"), "");
+    }
+
+    /// 两半各画各的：一个文件既暂存了一半、工作区里又改了另一半（`MM`）时不串味
+    ///
+    /// 这是提交页第三栏的功能前提——「已暂存」列画的是这回要落盘的内容，掺进还没
+    /// `git add` 的部分，就等于让人对着一份不是自己将要提交的东西按提交。
+    #[test]
+    fn staged_and_worktree_diffs_do_not_leak_into_each_other() {
+        let dir = repo();
+        fs::write(dir.path().join("a.txt"), "one\ntwo\n").expect("write");
+        commit(dir.path(), "chore: 铺底");
+        // 先把第二行改掉并暂存，再在工作区里追加一行：此刻 index 与 worktree 都有东西
+        fs::write(dir.path().join("a.txt"), "one\nTWO\n").expect("write");
+        git_in(dir.path(), &["add", "a.txt"]);
+        fs::write(dir.path().join("a.txt"), "one\nTWO\nthree\n").expect("write");
+
+        let staged = read_staged(dir.path(), "a.txt", None, false).expect("已暂存的一半");
+        assert_eq!(staged.render, Render::Text, "{staged:?}");
+        assert_eq!(
+            (staged.added, staged.deleted),
+            (1, 1),
+            "只有「two → TWO」这一处进了索引：{:?}",
+            staged.hunks
+        );
+        let body = text_of(&staged);
+        assert!(
+            !body.contains("three"),
+            "还没暂存的那一行不能出现在这里：{body}"
+        );
+
+        let worktree = read_worktree(dir.path(), "a.txt", None, false).expect("未暂存的一半");
+        assert_eq!(
+            (worktree.added, worktree.deleted),
+            (1, 0),
+            "索引里已经有 TWO，剩下要算的只有追加的那一行：{:?}",
+            worktree.hunks
+        );
+        assert!(text_of(&worktree).contains("three"), "{:?}", worktree.hunks);
+    }
+
+    /// 仓库还没有第一个提交时 git 拿空树当基准，不能因此报错
+    ///
+    /// 「新建仓库 → 写文件 → git add」是第一次提交前的常规路径，这条走不通就等于
+    /// 第一个提交在提交页里看不见任何内容。
+    #[test]
+    fn a_staged_diff_works_before_the_first_commit() {
+        let dir = repo();
+        fs::write(dir.path().join("a.txt"), "first\n").expect("write");
+        git_in(dir.path(), &["add", "a.txt"]);
+
+        let diff = read_staged(dir.path(), "a.txt", None, false).expect("空仓库的暂存区");
+        assert_eq!(diff.render, Render::Text, "{diff:?}");
+        assert_eq!((diff.added, diff.deleted), (1, 0));
+    }
+
+    /// 改名必须把新旧两个路径一起当 pathspec 给
+    ///
+    /// 只给新路径时那一端不在候选集里，git 配不成一对，只会说"整个文件新增"——
+    /// 一个改了一行的文件会画成几百行全变。
+    #[test]
+    fn a_staged_rename_is_paired_with_its_old_path() {
+        let dir = repo();
+        fs::write(dir.path().join("a.txt"), "one\ntwo\nthree\n").expect("write");
+        commit(dir.path(), "chore: 铺底");
+        git_in(dir.path(), &["mv", "a.txt", "b.txt"]);
+        fs::write(dir.path().join("b.txt"), "one\nTWO\nthree\n").expect("write");
+        git_in(dir.path(), &["add", "-A"]);
+
+        let paired = read_staged(dir.path(), "b.txt", Some("a.txt"), false).expect("配对的改名");
+        assert_eq!(
+            (paired.added, paired.deleted),
+            (1, 1),
+            "只改了一行：{:?}",
+            paired.hunks
+        );
+
+        // 反面对照：没有旧路径就退化成整个文件新增。这条正是上面那个参数的由来
+        let alone = read_staged(dir.path(), "b.txt", None, false).expect("只给新路径");
+        assert_eq!(
+            (alone.added, alone.deleted),
+            (3, 0),
+            "不给旧路径就会退化成整个文件新增：{:?}",
+            alone.hunks
+        );
+    }
+
+    /// 一个 diff 里所有行的正文，用来断言"某一行在不在里面"
+    fn text_of(diff: &Diff) -> String {
+        diff.hunks
+            .iter()
+            .flat_map(|hunk| hunk.lines.iter())
+            .map(|line| line.text.as_str())
+            .collect::<Vec<&str>>()
+            .join("\n")
     }
 
     #[test]

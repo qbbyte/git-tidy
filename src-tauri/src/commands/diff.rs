@@ -16,6 +16,7 @@ pub async fn worktree_file_diff(
     state: State<'_, Arc<Db>>,
     id: i64,
     path: String,
+    old_path: Option<String>,
     ignore_white_space: bool,
 ) -> Result<diff::Diff, GitError> {
     let repo_path = query(state.inner().clone(), move |conn| {
@@ -24,7 +25,33 @@ pub async fn worktree_file_diff(
     .await?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        diff::read_worktree(&repo_path, &path, ignore_white_space)
+        diff::read_worktree(&repo_path, &path, old_path.as_deref(), ignore_white_space)
+    })
+    .await
+    .map_err(|err| GitError::Internal(err.to_string()))?
+}
+
+/// 已暂存的那一半：HEAD → 索引（提交页「已暂存」列的预览）。
+///
+/// 与 `worktree_file_diff` 是同一次改动的两半，参数刻意逐项对齐：前端在两个列之间
+/// 切换时传的是同一个文件对象，形状不一样就得在两处各拼一次参数。
+///
+/// `old_path` 只在改名时给：两个路径一起当 pathspec 传下去，git 才把改名配成一段。
+#[tauri::command]
+pub async fn staged_file_diff(
+    state: State<'_, Arc<Db>>,
+    id: i64,
+    path: String,
+    old_path: Option<String>,
+    ignore_white_space: bool,
+) -> Result<diff::Diff, GitError> {
+    let repo_path = query(state.inner().clone(), move |conn| {
+        repos::ensure_worktree(conn, id)
+    })
+    .await?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        diff::read_staged(&repo_path, &path, old_path.as_deref(), ignore_white_space)
     })
     .await
     .map_err(|err| GitError::Internal(err.to_string()))?

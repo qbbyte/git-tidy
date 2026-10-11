@@ -84,9 +84,37 @@ export interface StagedFiles extends Outcome {
   files: WorkingFile[];
 }
 
-/** 工作区里某个文件的未暂存改动（索引 → 工作区），逐行暂存的界面靠它 */
-export function worktreeFileDiff(repoId: number, path: string, ignoreWhiteSpace = false) {
-  return call<Diff>("worktree_file_diff", { id: repoId, path, ignoreWhiteSpace });
+/**
+ * 工作区里某个文件的未暂存改动（索引 → 工作区），逐行暂存的界面靠它。
+ *
+ * 与 `stagedFileDiff` 是同一次改动的两半：一个文件两边都有改动时状态是 `MM`，
+ * 两个命令各画自己那一半，合起来才是工作区里的全部改动。
+ *
+ * `oldPath` 只在改名时给。两个路径一起当 pathspec 传下去，git 才把改名配成一段；
+ * 只给新路径时那一端不在候选集里，配不成一对，改了一行的文件会画成整个文件新增。
+ */
+export function worktreeFileDiff(
+  repoId: number,
+  path: string,
+  oldPath: string | null = null,
+  ignoreWhiteSpace = false,
+) {
+  return call<Diff>("worktree_file_diff", { id: repoId, path, oldPath, ignoreWhiteSpace });
+}
+
+/**
+ * 已暂存的那一半（HEAD → 索引）。提交页「已暂存」列的预览靠它。
+ *
+ * 参数与 `worktreeFileDiff` 逐项对齐：两列之间切换时传的是同一个文件对象，
+ * 形状不一样就得在两处各拼一次。
+ */
+export function stagedFileDiff(
+  repoId: number,
+  path: string,
+  oldPath: string | null = null,
+  ignoreWhiteSpace = false,
+) {
+  return call<Diff>("staged_file_diff", { id: repoId, path, oldPath, ignoreWhiteSpace });
 }
 
 export function filePartialSupport(repoId: number, path: string) {

@@ -45,6 +45,7 @@ pub fn run() {
             commands::diff::commit_file_diff,
             commands::diff::commit_diff,
             commands::diff::worktree_file_diff,
+            commands::diff::staged_file_diff,
             commands::file::file_blame,
             commands::file::file_history,
             commands::file::file_tree,

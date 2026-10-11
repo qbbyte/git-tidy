@@ -115,7 +115,8 @@ async function load() {
     // 先问能不能分段暂存：不能做时连 diff 都不必取
     support.value = await filePartialSupport(id, props.file.path);
     if (!support.value.supported) return;
-    diff.value = await worktreeFileDiff(id, props.file.path);
+    // 改名要把来源路径一起给，否则 git 配不成一对，改了一行的文件会画成整个新增
+    diff.value = await worktreeFileDiff(id, props.file.path, props.file.fromPath);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -134,8 +135,10 @@ async function stageSelected() {
     repos.workingFiles = staged.files;
     detail.close();
     picked.value = {};
-    diff.value = null;
-    support.value = null;
+    /* 剩下的改动通常还要接着挑，所以重读一次而不是清空。清空之后这一栏会显示
+       「这个文件没有未暂存的改动」，而刚暂存掉的往往只是其中几段——那句话是错的，
+       而且正好错在用户最需要看清剩下什么的时候 */
+    await load();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
