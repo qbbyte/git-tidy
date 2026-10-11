@@ -17,7 +17,6 @@ import {
   type DropdownOption,
 } from "naive-ui";
 import RepoSidebar from "@/components/RepoSidebar.vue";
-import RefsModal from "@/components/RefsModal.vue";
 import SettingsModal from "@/components/SettingsModal.vue";
 import AddRepoModal from "@/components/AddRepoModal.vue";
 import NewBranchModal from "@/components/NewBranchModal.vue";
@@ -62,7 +61,6 @@ watch(
   (value) => { if (!value) newBranchVisible.value = false; },
 );
 
-const refsVisible = ref(false);
 
 const INTERRUPT_EXIT: Record<Interrupt, string> = {
   none: "",
@@ -296,15 +294,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
                 推送
                 <span v-if="syncAhead > 0" class="sync-badge accent">{{ syncAhead }}</span>
               </n-button>
-              <n-button
-                size="small"
-                quaternary
-                :disabled="!repos.canCommit"
-                title="分支 / 远程 / 标签"
-                @click="refsVisible = true"
-              >
-                引用 {{ repos.refs.length }}
-              </n-button>
             </div>
           </header>
 
@@ -367,7 +356,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 
         <settings-modal v-model:show="settingsVisible" />
         <add-repo-modal v-model:show="addRepoVisible" />
-        <refs-modal v-model:show="refsVisible" @new-branch="newBranchVisible = true" />
         <new-branch-modal v-model:show="newBranchVisible" />
       </n-message-provider>
     </n-dialog-provider>

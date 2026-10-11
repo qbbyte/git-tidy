@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { GitTidyError } from "@/api/client";
 import { openTerminal } from "@/api/prefs";
@@ -14,6 +14,7 @@ import {
   NScrollbar,
   NTag,
   type DropdownOption,
+  useDialog,
 } from "naive-ui";
 import Settings from "@vicons/tabler/es/Settings";
 import FolderIcon from "@vicons/tabler/es/Folder";
@@ -25,6 +26,8 @@ import { useReposStore } from "@/stores/repos";
 import { INTERRUPT_LABEL } from "@/api/refs";
 import type { Repo } from "@/api/repo";
 
+import { useWriteStore } from "@/stores/write";
+import type { Ref as GitRef } from "@/api/refs";
 /**
  * 常驻左栏（参考 UGit 风格）：
  * - 仓库列表：卡片式行，彩色图标 + 仓库名 + 状态指示
@@ -39,6 +42,17 @@ const emit = defineEmits<{
 }>();
 
 const editing = ref<{ id: number; name: string } | null>(null);
+const writes = useWriteStore();
+const dialog = useDialog();
+
+/* ---- 分支右键菜单 ---- */
+const branchMenu = reactive({ show: false, x: 0, y: 0, ref: null as GitRef | null });
+const branchRename = ref<{ from: string; to: string } | null>(null);
+
+const remoteName = computed(() => {
+  const remote = remoteBranches.value[0]?.name.split("/")[0];
+  return remote ?? "origin";
+});
 const repoQuery = ref("");
 /** 当前展开的折叠面板 */
 const activeSections = ref<string[]>(["branches"]);
@@ -119,6 +133,70 @@ function saveRename() {
   const { id, name } = editing.value;
   editing.value = null;
   repos.rename(id, name);
+}
+
+function branchMenuOptions(ref: GitRef): DropdownOption[] {
+  const isCurrent = ref.name === (repos.repoState?.branch ?? null);
+  const opts: DropdownOption[] = [];
+  if (!isCurrent) opts.push({ label: "切换到此分支", key: "switch", disabled: !writes.canWrite });
+  if (ref.upstream && !ref.upstreamGone) opts.push({ label: "强推（lease）", key: "force-push", disabled: !writes.canWrite });
+  opts.push({ label: "重命名", key: "rename", disabled: !writes.canWrite || isCurrent });
+  opts.push({ type: "divider", key: "d1" });
+  opts.push({ label: "删除", key: "delete", disabled: !writes.canWrite || isCurrent });
+  return opts;
+}
+
+function openBranchMenu(event: MouseEvent, ref: GitRef) {
+  event.preventDefault();
+  branchMenu.ref = ref;
+  branchMenu.x = event.clientX;
+  branchMenu.y = event.clientY;
+  branchMenu.show = true;
+}
+
+function closeBranchMenu() { branchMenu.show = false; }
+
+async function onBranchMenuSelect(key: string) {
+  const ref = branchMenu.ref;
+  closeBranchMenu();
+  if (!ref) return;
+  if (key === "switch") {
+    if (repos.workingFiles.length > 0) {
+      dialog.warning({ title: "工作区有改动", content: `工作区还有 ${repos.workingFiles.length} 处改动，切换分支会被拒绝。`, positiveText: "知道了" });
+      return;
+    }
+    await writes.switchBranch(ref.name, false);
+    return;
+  }
+  if (key === "rename") { branchRename.value = { from: ref.name, to: ref.name }; return; }
+  if (key === "force-push") {
+    dialog.warning({
+      title: `强推 ${ref.name}？`, content: "远程被别人抢先推过时这次会失败（lease 保护）。",
+      positiveText: "强推", negativeText: "算了",
+      onPositiveClick: () => void writes.push(remoteName.value, ref.name, false, true),
+    }); return;
+  }
+  if (key === "delete") {
+    const probe = await writes.probeDeletable(ref.name);
+    if (probe === null) return;
+    dialog.warning({
+      title: `删除分支 ${ref.name}？`,
+      content: probe.merged
+        ? "已合并进别的分支，删除不会丢提交（reflog 里还找得回来）。"
+        : `有 ${probe.unmerged ?? "?"} 个未合并的提交，删除会丢掉它们。`,
+      positiveText: "删除", negativeText: "算了",
+      onPositiveClick: () => void writes.deleteBranch(ref.name, !probe.merged),
+    }); return;
+  }
+}
+
+async function saveBranchRename() {
+  if (!branchRename.value) return;
+  const { from, to } = branchRename.value;
+  branchRename.value = null;
+  const trimmed = to.trim();
+  if (!trimmed || trimmed === from) return;
+  await writes.renameBranch(from, trimmed);
 }
 </script>
 
@@ -212,10 +290,27 @@ function saveRename() {
             v-for="ref in localBranches"
             :key="ref.fullName"
             class="ref-item"
+            :class="{ current: repos.repoState?.branch === ref.name }"
+            @contextmenu="openBranchMenu($event, ref)"
           >
-            <span class="ref-name">{{ ref.name }}</span>
-            <n-tag v-if="repos.repoState?.branch === ref.name" size="tiny" type="info" :bordered="false">HEAD</n-tag>
-            <span v-if="ref.ahead || ref.behind" class="ahead-behind">↑{{ ref.ahead ?? 0 }} ↓{{ ref.behind ?? 0 }}</span>
+            <!-- 内联重命名 -->
+            <template v-if="branchRename && branchRename.from === ref.name">
+              <n-input
+                v-model:value="branchRename.to"
+                size="tiny"
+                placeholder="新分支名"
+                @keyup.enter="saveBranchRename"
+                @click.stop
+              />
+              <n-button size="tiny" type="primary" @click.stop="saveBranchRename">✓</n-button>
+              <n-button size="tiny" quaternary @click.stop="branchRename = null">✕</n-button>
+            </template>
+            <!-- 正常展示 -->
+            <template v-else>
+              <span class="ref-name">{{ ref.name }}</span>
+              <n-tag v-if="repos.repoState?.branch === ref.name" size="tiny" type="info" :bordered="false">HEAD</n-tag>
+              <span v-if="ref.ahead || ref.behind" class="ahead-behind">↑{{ ref.ahead ?? 0 }} ↓{{ ref.behind ?? 0 }}</span>
+            </template>
           </div>
         </div>
       </n-collapse-item>
@@ -254,6 +349,17 @@ function saveRename() {
         设置
       </n-button>
     </div>
+    <!-- 分支右键菜单 -->
+    <n-dropdown
+      trigger="manual"
+      placement="bottom-start"
+      :show="branchMenu.show"
+      :x="branchMenu.x"
+      :y="branchMenu.y"
+      :options="branchMenu.ref ? branchMenuOptions(branchMenu.ref) : []"
+      @clickoutside="closeBranchMenu"
+      @select="onBranchMenuSelect"
+    />
   </aside>
 </template>
 <style scoped>
@@ -436,6 +542,7 @@ function saveRename() {
   cursor: default;
 }
 .ref-item:hover { background: var(--surface-hover); }
+.ref-item.current { background: var(--surface-selected); box-shadow: inset 2px 0 0 var(--accent); }
 .ref-item .ref-name {
   flex: 1;
   min-width: 0;
