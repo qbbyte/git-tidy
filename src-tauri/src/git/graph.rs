@@ -800,6 +800,9 @@ mod tests {
             .expect("spawn git")
             .expect_success()
             .expect("init");
+        // CI runner 没有全局 git 身份，merge 需要 committer identity
+        git(repo, &["config", "user.name", "t"]);
+        git(repo, &["config", "user.email", "t@example.com"]);
         for (name, value) in [("base", "1"), ("one", "2"), ("two", "3")] {
             std::fs::write(repo.join(format!("{name}.txt")), format!("{value}\n")).expect("write");
             git(repo, &["add", "-A"]);

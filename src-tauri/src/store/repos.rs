@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -134,12 +133,18 @@ pub fn set_kind(conn: &Connection, id: i64, kind: RepoKind) -> Result<Repo, GitE
 /// 展示名取目录名；URL 抓取下来的目录常带 .git 后缀，那不算名字的一部分。
 pub(crate) fn derive_name(path: &str) -> String {
     let trimmed = path.trim_end_matches(['/', '\\']);
-    Path::new(trimmed)
-        .file_name()
-        .map(|name| name.to_string_lossy().trim_end_matches(".git").to_string())
-        .filter(|name| !name.is_empty())
-        // 根目录这类没有上一级名字的写法，退回用户原本输入，而不是裁空后的结果
-        .unwrap_or_else(|| path.to_string())
+    // 不用 Path::file_name()：它在 Windows CI 上对含正斜杠的驱动器路径
+    // 行为不稳定，直接按两种分隔符拆更可靠。
+    let name = trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim_end_matches(".git");
+    if name.is_empty() {
+        path.to_string()
+    } else {
+        name.to_string()
+    }
 }
 
 fn select_by_path(conn: &Connection, path: &str) -> Result<Option<Repo>, GitError> {
@@ -214,6 +219,7 @@ fn store_failure(err: rusqlite::Error) -> GitError {
 mod tests {
     use super::*;
     use crate::store::db::{lock, Db};
+    use std::path::Path;
 
     fn open_db(dir: &Path) -> Db {
         Db::open(dir).expect("open db")

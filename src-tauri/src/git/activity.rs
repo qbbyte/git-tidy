@@ -420,6 +420,9 @@ mod tests {
     fn repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
         git_in(dir.path(), &["init", "-q", "-b", "main", "."]);
+        // CI runner 没有全局 git 身份，merge / revert 需要 committer identity
+        git_in(dir.path(), &["config", "user.name", "t"]);
+        git_in(dir.path(), &["config", "user.email", "t@example.com"]);
         dir
     }
 
