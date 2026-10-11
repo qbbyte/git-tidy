@@ -329,7 +329,7 @@ watch(
 }
 
 .path {
-  font-family: Consolas, "Courier New", monospace;
+  font-family: var(--font-mono);
   font-weight: 600;
   overflow: hidden;
   white-space: nowrap;
@@ -350,7 +350,7 @@ watch(
 
 .text {
   margin: 0;
-  font-family: Consolas, "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;

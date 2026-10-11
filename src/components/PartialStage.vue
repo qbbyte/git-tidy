@@ -262,7 +262,7 @@ watch(() => props.file.path, load, { immediate: true });
   align-items: flex-start;
   gap: 4px;
   padding: 0 4px;
-  font-family: Consolas, "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 18px;
 }

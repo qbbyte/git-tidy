@@ -244,7 +244,7 @@ const contentView = computed(() => {
 .content {
   margin: 0;
   padding: 4px 16px 12px;
-  font-family: Consolas, "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 18px;
   white-space: pre-wrap;

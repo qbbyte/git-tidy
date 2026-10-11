@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { NButton, NCollapse, NCollapseItem, NEmpty, NInput, NPopconfirm } from "naive-ui";
 import type { Conflict, Resolution } from "@/api/write";
@@ -370,7 +370,7 @@ watch(
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   background: var(--surface-sunken);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;

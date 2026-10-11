@@ -540,7 +540,7 @@ function tokensOf(text: string) {
 }
 
 .body {
-  font-family: Consolas, "Courier New", monospace;
+  font-family: var(--font-mono);
 }
 
 /**

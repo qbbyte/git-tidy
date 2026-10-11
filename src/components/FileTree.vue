@@ -387,7 +387,7 @@ function isExec(entry: TreeEntry): boolean {
    再大字就撑破 22px 的槽，再小就和旁边 14px 的图形记号不是一个重量 */
 .mark {
   flex: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 700;
   line-height: 1;

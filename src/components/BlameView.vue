@@ -162,7 +162,7 @@ const blocks = computed<Block[]>(() => {
 
 .text {
   padding-left: 8px;
-  font-family: Consolas, "Courier New", monospace;
+  font-family: var(--font-mono);
 }
 
 .waiting {
