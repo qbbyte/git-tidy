@@ -9,8 +9,7 @@ import {
   NMessageProvider,
   NProgress,
   NSpace,
-  NTab,
-  NTabs,
+  NIcon,
   dateZhCN,
   zhCN,
   type GlobalThemeOverrides,
@@ -25,7 +24,6 @@ import { useWriteStore } from "@/stores/write";
 import { usePrefsStore as usePrefs } from "@/stores/prefs";
 import { INTERRUPT_LABEL, type Interrupt } from "@/api/refs";
 import { FONT_UI, RADIUS_CONTROL, tokens } from "@/styles/tokens";
-import { usePaneDivider } from "@/composables/usePaneDivider";
 import {
   SHORTCUTS,
   TAB_SHORTCUTS,
@@ -37,57 +35,29 @@ import { runShell } from "@/shell";
 import { checkForUpdate, updateCheckOnStartup, type CheckResult } from "@/api/update";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-/**
- * 外壳照 Fork：左栏常驻仓库与只读信息，主区用页签切「历史 / 提交」。
- * 页签状态由路由决定，这样刷新和深链都能落回同一个页签。
- */
+// 导航图标
+import HistoryIcon from "@vicons/tabler/es/History";
+import FileIcon from "@vicons/tabler/es/FileText";
+import GitCommitIcon from "@vicons/tabler/es/GitCommit";
+import ReportIcon from "@vicons/tabler/es/DeviceAnalytics";
+import ChangelogIcon from "@vicons/tabler/es/ClipboardList";
+import GitBranchIcon from "@vicons/tabler/es/GitBranch";
+
 const route = useRoute();
 const router = useRouter();
 const repos = useReposStore();
 const writes = useWriteStore();
 const settingsVisible = ref(false);
-/** 侧栅「添加」按钮的落点：弹窗与设置同一套生命周期，成功后自动关闭 */
 const addRepoVisible = ref(false);
-/** 页头工具条上的「新建分支」弹窗。从引用栏搬出来的：栏内折两行，且它不该常驻 */
 const newBranchVisible = ref(false);
-/** 切到只读仓库时把这个弹窗收掉：它里面每个动作都会被写权限挡掉 */
+
 watch(
   () => repos.canCommit,
-  (value) => {
-    if (!value) newBranchVisible.value = false;
-  },
+  (value) => { if (!value) newBranchVisible.value = false; },
 );
 
-/**
- * 侧栏宽度，像素单位：它是导航，带宽固定比跟着窗口一起长要好。
- *
- * 上限 420 是因为再宽就变成第二个主区了，而主区里还摆着列表与 diff 两栏。
- */
-const shell = ref<HTMLElement | null>(null);
-const sider = usePaneDivider({
-  container: shell,
-  storageKey: "git-tidy:sidebar:width",
-  fallback: 280,
-  min: 220,
-  max: 420,
-  unit: "px",
-});
-
-/**
- * 引用弹窗（分支 / 远程 / 标签）是否打开。
- *
- * 它原来是主区右侧的第三栏：一条可拖宽的常驻 aside。窗口逻辑宽只有 ~1030px，
- * 展开那一栏后主区被挤到 400px 上下、历史列表只剩 ~160px；而分支与标签都属于
- * "要用时才看"的东西，不值得常驻一份宽度。改成弹窗后一分宽度不占，入口仍是
- * 页头右端的「引用 N」，计数摆在按钮上，不开也知道里面有多少。
- */
 const refsVisible = ref(false);
 
-/**
- * 每种中断态的出口。这一批只给文字指引，等 M2/M3 有「继续 / 中止」按钮再换成按钮。
- * 状态名本身不在这里重复定义，用 INTERRUPT_LABEL——它与 Rust 侧 `Interrupt::label()`
- * 逐字对齐，所以提示条和提交被拒时的错误文案叫法一致。
- */
 const INTERRUPT_EXIT: Record<Interrupt, string> = {
   none: "",
   merge: "解决冲突后用 git merge --continue 收尾，或 git merge --abort 放弃这次合并",
@@ -96,13 +66,6 @@ const INTERRUPT_EXIT: Record<Interrupt, string> = {
   revert: "解决冲突后用 git revert --continue 继续，或 --abort 放弃这次回滚",
 };
 
-/**
- * Naive UI 的主题覆盖。
- *
- * **颜色全部从 `@/styles/tokens` 取**，不写字面色值：CSS 变量进不了 Naive 的
- * 派生逻辑（hover / pressed 是它自己按 primary 算的），所以这里是唯一需要
- * 「重复一遍」的地方——但它重复的是同一个常量，不是另一个手抄的色号。
- */
 const themeOverrides: GlobalThemeOverrides = {
   common: {
     primaryColor: tokens.accent,
@@ -120,27 +83,19 @@ const activeTab = computed(() => {
   if (route.name === "changelog") return "changelog";
   return "history";
 });
-/** 只读浏览仓库没有索引，提交页整个不给进（Rust 侧同样会拒，这里只是不摆出能点的按钮） */
 const commitTabEnabled = computed(() => repos.canCommit);
 
-const headline = computed(() => {
-  const repo = repos.current;
-  if (!repo) return "还没有打开仓库";
-  return `${repo.name} · ${branchPart()} · ${repos.workingFiles.length} 项待提交`;
-});
 
-/**
- * 中断时这里直接换成中断态：变基过程中 HEAD 是游离的，写"游离 HEAD"会让人以为
- * 分支丢了，而真正要回答的是"哪个分支正卡在半路"（§7.3）。
- */
-function branchPart() {
+/** 顶栏右半的仓库名 + 分支显示 */
+const repoName = computed(() => repos.current?.name ?? null);
+const branchName = computed(() => {
   const state = repos.repoState;
   if (repos.interrupted) {
     const label = INTERRUPT_LABEL[repos.interrupt];
     return state?.interruptBranch ? `${label}：${state.interruptBranch}` : label;
   }
   return state?.branch ?? repos.info?.branch ?? "游离 HEAD";
-}
+});
 
 const interruptTitle = computed(() => INTERRUPT_LABEL[repos.interrupt]);
 const interruptExit = computed(() => INTERRUPT_EXIT[repos.interrupt]);
@@ -149,52 +104,23 @@ function go(name: string | number) {
   router.push({ name: String(name) });
 }
 
-/**
- * 全局快捷键（需求 7.23）。
- *
- * 按键集合来自 `shortcuts.ts` 的单一数组——设置页里的说明表渲染的是同一个数组，
- * 所以不可能出现“文档写了但按了没反应”。
- *
- * 两条纪律：
- * 1. 输入框里不劫持（用户在打字，不是在按快捷键），只有纯 `F5` 与数字键除外；
- * 2. 有页面登记的动作交给页面，没登记的（比如设置页上的 F5）退回重读仓库状态，
- *    而不是静默什么都不发生。
- */
 const shortcutContext: ShortcutContext = {
-  refresh() {
-    // 页面自己登记了就用它（历史页会按当前筛选重跑），否则退回重读仓库
-    if (!runShell("refresh")) repos.refreshAll();
-  },
-  focusSearch() {
-    runShell("focusSearch");
-  },
-  submit() {
-    runShell("submit");
-  },
-  switchRepo() {
-    runShell("switchRepo");
-  },
+  refresh() { if (!runShell("refresh")) repos.refreshAll(); },
+  focusSearch() { runShell("focusSearch"); },
+  submit() { runShell("submit"); },
+  switchRepo() { runShell("switchRepo"); },
   gotoTab(index: number) {
     const tab = TAB_SHORTCUTS[index];
     if (tab) go(TAB_ROUTE[tab.label] ?? "history");
   },
-  openSettings() {
-    settingsVisible.value = true;
-  },
+  openSettings() { settingsVisible.value = true; },
 };
 
-/** 页签显示名 → 路由名。数字键跳转靠它，别处在别处再写一份 */
 const TAB_ROUTE: Record<string, string> = {
-  历史: "history",
-  文件: "files",
-  提交: "commit",
-  报告: "report",
-  CHANGELOG: "changelog",
+  历史: "history", 文件: "files", 提交: "commit", 报告: "report", CHANGELOG: "changelog",
 };
 
 function onKeyDown(event: KeyboardEvent) {
-  // F5 与数字键在输入框里也生效：前者是“重读数据”，后者是切页签，
-  // 两个都不会打断打字。其余组合一律让给输入框。
   const typing = isTypingTarget(event.target);
   for (const shortcut of SHORTCUTS) {
     if (typing && !shortcut.keys.some((key) => /^F\d+$/.test(key))) continue;
@@ -211,22 +137,6 @@ function onKeyDown(event: KeyboardEvent) {
   }
 }
 
-onMounted(() => {
-  window.addEventListener("keydown", onKeyDown);
-  // 设置要开着也能被刷新，所以偏好在启动时就读一份
-  usePrefs().load();
-  void startupUpdateCheck();
-});
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
-
-/**
- * 启动时那次版本检查（需求 7.24）。
- *
- * 三条自律：
- * 1. **先问偏好**：关掉了就一个字节都不发，不做“先查了再决定要不要用”；
- * 2. **静默失败**：查不到、限流、断网都不弹任何东西——那只是没查成，不是错误；
- * 3. **提示是可关的横幅，不是弹窗**：启动就抢焦点的弹窗会把用户从正在做的事里拽出去。
- */
 const updateNotice = ref<CheckResult | null>(null);
 
 async function startupUpdateCheck() {
@@ -234,14 +144,10 @@ async function startupUpdateCheck() {
     if (!(await updateCheckOnStartup())) return;
     const result = await checkForUpdate();
     if (result.available) updateNotice.value = result;
-  } catch {
-    // 查不到就算了，见上文第 2 条
-  }
+  } catch { /* 静默 */ }
 }
 
-function dismissUpdate() {
-  updateNotice.value = null;
-}
+function dismissUpdate() { updateNotice.value = null; }
 
 async function openUpdatePage() {
   const url = updateNotice.value?.latest?.url;
@@ -249,274 +155,318 @@ async function openUpdatePage() {
   dismissUpdate();
 }
 
-function closeError() {
-  repos.error = null;
-}
+function closeError() { repos.error = null; }
+
+onMounted(() => {
+  window.addEventListener("keydown", onKeyDown);
+  usePrefs().load();
+  void startupUpdateCheck();
+});
+onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 </script>
 
 <template>
   <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme-overrides="themeOverrides">
     <n-dialog-provider>
-    <n-message-provider>
-      <div ref="shell" class="shell" :class="{ resizing: sider.dragging.value }">
-        <repo-sidebar class="sider" :style="{ width: `${sider.size.value}px` }" @open-settings="settingsVisible = true" @open-add-repo="addRepoVisible = true" />
+      <n-message-provider>
+        <div class="app">
+          <!-- 全宽顶栏：品牌 + 导航页签 + 仓库上下文 + 引用按钮 -->
+          <header class="toolbar">
+            <!-- 品牌 -->
+            <div class="brand">
+              <span class="brand-name">Git Tidy</span>
+            </div>
 
-        <div
-          class="sider-divider"
-          role="separator"
-          aria-orientation="vertical"
-          :aria-valuenow="Math.round(sider.size.value)"
-          title="拖动调宽窄，双击恢复默认"
-          @pointerdown="sider.onPointerDown"
-          @dblclick="sider.reset"
-        />
+            <!-- 导航页签（带图标） -->
+            <nav class="nav">
+              <button
+                class="nav-item"
+                :class="{ active: activeTab === 'history' }"
+                @click="go('history')"
+              >
+                <n-icon :component="HistoryIcon" size="16" />
+                <span>历史</span>
+              </button>
+              <button
+                class="nav-item"
+                :class="{ active: activeTab === 'files' }"
+                @click="go('files')"
+              >
+                <n-icon :component="FileIcon" size="16" />
+                <span>文件</span>
+              </button>
+              <button
+                class="nav-item"
+                :class="{ active: activeTab === 'commit', disabled: !commitTabEnabled }"
+                :disabled="!commitTabEnabled"
+                @click="go('commit')"
+              >
+                <n-icon :component="GitCommitIcon" size="16" />
+                <span>提交</span>
+              </button>
+              <button
+                class="nav-item"
+                :class="{ active: activeTab === 'report' }"
+                @click="go('report')"
+              >
+                <n-icon :component="ReportIcon" size="16" />
+                <span>报告</span>
+              </button>
+              <button
+                class="nav-item"
+                :class="{ active: activeTab === 'changelog' }"
+                @click="go('changelog')"
+              >
+                <n-icon :component="ChangelogIcon" size="16" />
+                <span>CHANGELOG</span>
+              </button>
+            </nav>
 
-        <section class="main">
-          <!--
-            仓库名与页签：以前是 space-between 把页签甩到最右、标题缩成 12px 淡字，
-            全屏最该被看见的上下文反而最弱。现在页签左对齐当主导航，标题当标题。
-          -->
-          <header class="bar">
-            <n-tabs type="line" size="small" :value="activeTab" @update:value="go">
-              <n-tab name="history">历史</n-tab>
-              <!-- 文件页只读浏览，不碰工作区，所以 browse 仓库也摆出来 -->
-              <n-tab name="files">文件</n-tab>
-              <n-tab name="commit" :disabled="!commitTabEnabled">提交</n-tab>
-              <!-- 报告页只读历史，只读浏览的仓库也能看，所以不跟着工作区权限一起禁 -->
-              <n-tab name="report">报告</n-tab>
-              <!-- 导出可用；写回文件要工作区，所以只读浏览仓库下这个页签摆着但不写 -->
-              <n-tab name="changelog">CHANGELOG</n-tab>
-              <!-- 设置不在这里：入口是左下角的齿轮，打开的是弹窗而非页签 -->
-            </n-tabs>
-            <span class="headline" :title="headline">{{ headline }}</span>
+            <!-- 仓库上下文 -->
+            <div v-if="repoName" class="context">
+              <span class="repo">{{ repoName }}</span>
+              <n-icon :component="GitBranchIcon" size="14" class="branch-icon" />
+              <span class="branch">{{ branchName }}</span>
+              <span v-if="repos.workingFiles.length" class="changes">{{ repos.workingFiles.length }} 待提交</span>
+            </div>
+            <div v-else class="context empty">还没有打开仓库</div>
 
-            <!--
-              引用（分支 / 远程 / 标签）开的是弹窗，不再是右侧的第三栏。
-              它原来是页头这一排的第二个按钮，和「新建分支」并排——两个都跟分支有关，
-              看着像两套入口干同一件事，而且展开那一栏会把主区挤到 400px。
-              现在只留这一个入口：引用列表与「新建分支」（在列表的「分支 N」标题上）同处一个弹窗。
-              计数摆在按钮上，不开也知道里面有多少。
-            -->
-            <n-button
-              class="bar-actions"
-              size="small"
-              quaternary
-              :disabled="!repos.canCommit"
-              :title="repos.canCommit ? '分支 / 远程 / 标签' : '只读浏览的仓库没有写权限，引用里的动作都用不了'"
-              @click="refsVisible = true"
-            >
-              引用 {{ repos.refs.length }}
-            </n-button>
+            <!-- 右侧动作 -->
+            <div class="actions">
+              <n-button
+                size="small"
+                quaternary
+                :disabled="!repos.canCommit"
+                title="分支 / 远程 / 标签"
+                @click="refsVisible = true"
+              >
+                引用 {{ repos.refs.length }}
+              </n-button>
+            </div>
           </header>
 
-          <!-- 中断态常驻、关不掉：它不是一个可以"知道了"的提醒，而是写入口为什么灰着 -->
-          <n-alert
-            v-if="repos.interrupted"
-            class="banner interrupt"
-            type="warning"
-            :title="interruptTitle"
-            :closable="false"
-          >
-            <div>{{ interruptExit }}</div>
-            <div class="muted">
-              {{ writes.hasConflicts
-                ? `左栏列出了 ${writes.conflicts.length} 个冲突文件，逐块取舍后可以续跑收尾。`
-                : "没有待解决的冲突：要么已经全部标记完，可以直接续跑，要么去终端里处理完再回来。" }}
-            </div>
-            <n-space size="small" class="recheck">
-              <n-button
-                v-if="!writes.hasConflicts"
-                size="small"
+          <!-- 下方：侧栏 + 主区 -->
+          <div class="body">
+            <aside class="sider-wrap">
+              <repo-sidebar @open-settings="settingsVisible = true" @open-add-repo="addRepoVisible = true" />
+            </aside>
+
+            <main class="main-area">
+              <!-- 中断态提示 -->
+              <n-alert
+                v-if="repos.interrupted"
+                class="banner interrupt"
                 type="warning"
-                :loading="writes.busy"
-                @click="writes.abort()"
+                :title="interruptTitle"
+                :closable="false"
               >
-                一键退回
-              </n-button>
-              <n-button
-                v-if="!writes.hasConflicts"
-                size="small"
-                type="primary"
-                :loading="writes.busy"
-                @click="writes.continueOperation(null)"
-              >
-                续跑收尾
-              </n-button>
-              <n-button
-                size="small"
-                :loading="repos.loading"
-                @click="repos.refreshAll()"
-              >
-                已在终端处理完，重读一次
-              </n-button>
-            </n-space>
-          </n-alert>
+                <div>{{ interruptExit }}</div>
+                <div class="muted">
+                  {{ writes.hasConflicts
+                    ? `左栏列出了 ${writes.conflicts.length} 个冲突文件。`
+                    : "没有待解决的冲突。" }}
+                </div>
+                <n-space size="small" style="margin-top: 6px">
+                  <n-button v-if="!writes.hasConflicts" size="small" type="warning" :loading="writes.busy" @click="writes.abort()">一键退回</n-button>
+                  <n-button v-if="!writes.hasConflicts" size="small" type="primary" :loading="writes.busy" @click="writes.continueOperation(null)">续跑收尾</n-button>
+                  <n-button size="small" :loading="repos.loading" @click="repos.refreshAll()">重读一次</n-button>
+                </n-space>
+              </n-alert>
 
-          <div v-if="repos.progress" class="banner">
-            <div class="banner-title">下载中：{{ repos.progress.url }}</div>
-            <n-progress
-              type="line"
-              :percentage="repos.progress.percent"
-              :indeterminate="repos.progress.percent === 0"
-              processing
-              show-indicator
-            />
-            <div class="muted">{{ repos.progress.phase }}</div>
-          </div>
-
-          <div v-if="updateNotice" class="banner">
-            <n-alert type="info" :closable="true" @close="dismissUpdate">
-              <div class="banner-title">
-                发现新版本 v{{ updateNotice.latest?.version }}（当前 v{{ updateNotice.current }}）
+              <div v-if="repos.progress" class="banner">
+                <div class="banner-title">下载中：{{ repos.progress.url }}</div>
+                <n-progress type="line" :percentage="repos.progress.percent" :indeterminate="repos.progress.percent === 0" processing show-indicator />
+                <div class="muted">{{ repos.progress.phase }}</div>
               </div>
-              <n-space size="small">
-                <span class="muted">{{ updateNotice.latest?.name }}</span>
-                <n-button size="small" type="primary" @click="openUpdatePage">去看看</n-button>
-                <span class="muted">下载与安装由 GitHub Releases 页面负责，本工具不自动替换自己</span>
-              </n-space>
-            </n-alert>
+
+              <div v-if="updateNotice" class="banner">
+                <n-alert type="info" :closable="true" @close="dismissUpdate">
+                  <div class="banner-title">发现新版本 v{{ updateNotice.latest?.version }}（当前 v{{ updateNotice.current }}）</div>
+                  <n-space size="small">
+                    <span class="muted">{{ updateNotice.latest?.name }}</span>
+                    <n-button size="small" type="primary" @click="openUpdatePage">去看看</n-button>
+                  </n-space>
+                </n-alert>
+              </div>
+
+              <n-alert v-if="repos.error" class="banner" type="error" :title="repos.error.message" closable @close="closeError">
+                <div>错误码：{{ repos.error.code }}</div>
+                <pre v-if="repos.error.detail" class="raw-output">{{ repos.error.detail }}</pre>
+              </n-alert>
+
+              <div class="content">
+                <router-view />
+              </div>
+            </main>
           </div>
 
-          <n-alert
-            v-if="repos.error"
-            class="banner"
-            type="error"
-            :title="repos.error.message"
-            closable
-            @close="closeError"
-          >
-            <div>错误码：{{ repos.error.code }}</div>
-            <pre v-if="repos.error.detail" class="raw-output">{{ repos.error.detail }}</pre>
-          </n-alert>
+        </div>
 
-          <div class="content">
-            <router-view />
-          </div>
-        </section>
-
-      </div>
-
-      <!--
-        弹窗统一挂在 App 这一层：内容组件（RefPanel）自己不嵌套弹窗，
-        只用事件往上报，免得弹窗里再套弹窗、层级和关闭顺序纠缠不清。
-      -->
-      <settings-modal v-model:show="settingsVisible" />
-      <add-repo-modal v-model:show="addRepoVisible" />
-      <refs-modal v-model:show="refsVisible" @new-branch="newBranchVisible = true" />
-      <new-branch-modal v-model:show="newBranchVisible" />
-    </n-message-provider>
+        <settings-modal v-model:show="settingsVisible" />
+        <add-repo-modal v-model:show="addRepoVisible" />
+        <refs-modal v-model:show="refsVisible" @new-branch="newBranchVisible = true" />
+        <new-branch-modal v-model:show="newBranchVisible" />
+      </n-message-provider>
     </n-dialog-provider>
   </n-config-provider>
 </template>
 
 <style scoped>
-.shell {
-  display: flex;
-  height: 100vh;
-  background: var(--surface-app);
-}
-
-.shell.resizing {
-  cursor: col-resize;
-  user-select: none;
-}
-
-/**
- * 侧栏宽度固定，但**不是"窗口再小也纹丝不动"**。
- *
- * 固定指的是不跟着窗口一起变宽（见 usePaneDivider 里像素制的理由）；而窗口缩到很小时
- * 它必须让位：最小窗口 + 拖到最宽的侧栏会把主区压到 500px 以下，那时提交页的表单栏
- * 加差异栏怎么也摆不下，整页出现横向滚动条。`min-width` 与分隔条的 `min: 220` 是同一个数。
- */
-.sider {
-  flex: 0 1 auto;
-  min-width: 220px;
-}
-
-.sider-divider {
-  position: relative;
-  flex: none;
-  width: 3px;
-  margin: 0 2px;
-  cursor: col-resize;
-  border-radius: 2px;
-  transition: background 120ms ease;
-}
-
-/* 热区扩到 15px，不占布局——理由见 CommitsView 里的同一条注释 */
-.sider-divider::after {
-  content: "";
-  position: absolute;
-  inset: 0 -6px;
-}
-
-.sider-divider:hover,
-.shell.resizing .sider-divider {
-  background: var(--accent);
-}
-
-/**
- * 主区的下限，也是**侧栏让位的唯一办法**。
- *
- * 光在侧栏写 `flex: 0 1 auto` 是不够的：`.sider` 的 flex 基准来自它的 width，
- * 而这里的基准是 0%，两者之和永远小于窗口宽度——永远是正富余，侧栏一次都不会缩。
- * 给主区一个真实下限之后，窗口小到装不下时 flex 才会去压侧栏。
- *
- * 622 = 窄布局差异栏 300 + 表单栏 290 + `.content` 左右内边距 32：提交页窄布局那一档
- * 就是全应用最挤的地方，它是整壳的下限。`npm run check:layout` 会验这三项之和。
- */
-.main {
+.app {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-width: 622px;
+  height: 100vh;
 }
 
-/* 页头右端的动作组：页签左对齐之后，右端本来是空的，把工具按钮推过去 */
-.bar-actions {
-  flex: none;
-  margin-left: auto;
-}
-
-.bar {
+/* ---- 全宽顶栏 ---- */
+.toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 6px 16px;
+  gap: 8px;
+  flex: none;
+  height: 40px;
+  padding: 0 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  z-index: 10;
 }
 
-/*
- * 标题给足权重：仓库名、分支、待提交条数是每时每刻都要看的东西，
- * 原来压到 12px + 0.8 透明度和那排正文一样重，等于把它藏了。
- */
-.headline {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* 品牌 */
+.brand {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+}
+.brand-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
   white-space: nowrap;
 }
 
-.banner {
-  margin: 12px 16px 0;
-}
-
-/* 常驻提示条不能被主区挤压掉：整屏就数它最不能看不见 */
-.interrupt {
+/* 导航页签 */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   flex: none;
 }
 
-.recheck {
-  margin-top: 8px;
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 120ms ease;
 }
 
-.banner-title {
-  font-size: 12px;
-  margin-bottom: 6px;
+.nav-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-1);
 }
+
+.nav-item.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-item.disabled,
+.nav-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 仓库上下文 */
+.context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding-left: 16px;
+  margin-left: 8px;
+  border-left: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.context .repo {
+  font-weight: 600;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.context .branch-icon {
+  opacity: 0.5;
+}
+
+.context .branch {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context .changes {
+  flex: none;
+  white-space: nowrap;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--warn-text);
+  background: var(--warn-bg);
+}
+
+.context.empty {
+  opacity: 0.5;
+  font-style: italic;
+}
+
+/* 右侧动作 */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+/* 下方布局 */
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.sider-wrap {
+  flex: none;
+  width: 280px;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.main-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 提示横幅 */
+.banner {
+  margin: 12px 16px 0;
+}
+.banner.interrupt { flex: none; }
+.banner-title { font-size: 12px; margin-bottom: 6px; }
 
 .content {
   flex: 1;
@@ -525,15 +475,6 @@ function closeError() {
   padding: 12px 16px 16px;
 }
 
-.muted {
-  font-size: 11px;
-  opacity: 0.7;
-}
-
-.raw-output {
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  font-size: 12px;
-  opacity: 0.8;
-}
+.muted { font-size: 11px; opacity: 0.7; }
+.raw-output { margin: 8px 0 0; white-space: pre-wrap; font-size: 12px; opacity: 0.8; }
 </style>
