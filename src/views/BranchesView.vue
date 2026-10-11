@@ -21,6 +21,7 @@ import {
 import RefreshIcon from "@vicons/tabler/es/Refresh";
 import TrashIcon from "@vicons/tabler/es/Trash";
 import GitBranchIcon from "@vicons/tabler/es/GitBranch";
+import NewBranchModal from "@/components/NewBranchModal.vue";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 
@@ -38,6 +39,7 @@ interface BranchDetail {
 }
 
 const branchDetails = ref<BranchDetail[]>([]);
+const newBranchVisible = ref(false);
 const loading = ref(false);
 
 const ACTIVE_DAYS = 30;
@@ -161,7 +163,7 @@ const currentBranch = computed(() => repos.repoState?.branch ?? null);
           <n-button quaternary size="small" title="刷新" :loading="loading" @click="onRefresh">
             <template #icon><n-icon :component="RefreshIcon" size="14" /></template>
           </n-button>
-          <n-button size="small" type="primary" @click="$router.push({ name: 'history' })">
+          <n-button size="small" type="primary" @click="newBranchVisible = true">
             新建分支
           </n-button>
         </n-space>
@@ -230,6 +232,7 @@ const currentBranch = computed(() => repos.repoState?.branch ?? null);
         </table>
       </div>
     </div>
+    <new-branch-modal v-model:show="newBranchVisible" />
   </div>
 </template>
 
