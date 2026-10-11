@@ -1,19 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import dayjs from "dayjs";
 import {
   NAlert,
   NButton,
   NDropdown,
   NEmpty,
+  NScrollbar,
   NSpace,
   NSpin,
-  NVirtualList,
+  NSplit,
+  NTable,
+  NTag,
   useDialog,
   useMessage,
   type DropdownOption,
-  type VirtualListInst,
-} from "naive-ui";
-import CommitRow from "@/components/CommitRow.vue";
+  } from "naive-ui";
+import CommitGraph from "@/components/CommitGraph.vue";
 import CommitDetail from "@/components/CommitDetail.vue";
 import FilterBar from "@/components/FilterBar.vue";
 import { useCommitStore } from "@/stores/commits";
@@ -21,18 +24,13 @@ import { useDetailStore } from "@/stores/detail";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { specFor } from "@/api/spec";
-import { COMMIT_ROW_HEIGHT } from "@/styles/tokens";
-import { usePaneDivider } from "@/composables/usePaneDivider";
-import { provideShell } from "@/shell";
 import { usePrefsStore } from "@/stores/prefs";
-// 「焦点在输入框里就不抢键」的判据与提交页共用同一份：两处都要挡，
-// 而挡的规则只能有一处，否则改了一边另一边就开始抽风
 import { isTypingTarget } from "@/shortcuts";
 import type { Commit, CommitFilter } from "@/api/commit";
 
 /**
- * 历史页：仓库由常驻侧栏选，这里左半是当前仓库的提交列表 + 图列，右半是选中提交的
- * 改动清单和单个文件的差异（§7.4、§7.5，照 Fork 的一屏两栏）。
+ * 历史页（重构）：n-split 左右分栏，左栏用 n-table 展示提交记录，
+ * 配合 CommitGraph 渲染 Git 提交网络图；右栏是选中提交的 Diff 详情。
  */
 const repos = useReposStore();
 const prefsStore = usePrefsStore();
@@ -44,138 +42,66 @@ const message = useMessage();
 
 const repoId = computed(() => repos.currentId);
 
-/**
- * 左右两栏的比例。
- *
- * 默认给详情（右边）六成：diff 的横向空间比提交列表值钱得多，1.15:1 时两边各半，
- * 看一个改了二十个文件的提交就得横向滚。
- *
- * `containerMinWidth` 是「另一栏至少留这么宽」——拖到详情只剩 200px 时
- * 代码会挤成一条，先卡住而不是等用户自己发现。
- */
-const split = ref<HTMLElement | null>(null);
-/** Ctrl+F 的落点：筛选条里那个关键词框由 FilterBar 自己拿 ref 并抛出聚焦动作 */
 const filterBar = ref<InstanceType<typeof FilterBar> | null>(null);
-/** 列显示来自个人偏好（设置页里改）。偏好没读到时 store 给的是全开 */
+
 const prefs = computed(
   () =>
-    prefsStore.prefs?.columns ?? {
-      refs: true,
-      author: true,
-      time: true,
-      sha: true,
-    },
+    prefsStore.prefs?.columns ?? { refs: true, author: true, time: true, sha: true },
 );
-const divider = usePaneDivider({
-  container: split,
-  storageKey: "git-tidy:history:split",
-  fallback: 0.4,
-  min: 0.2,
-  max: 0.7,
-  unit: "ratio",
-  // 详情栏（补集）至少留这么宽：diff 的横向空间比提交列表值钱。
-  // 取得太大会有副作用——窗口一窄两个下限就互相打架，见 usePaneDivider 的 clamp
-  containerMinWidth: 380,
-});
 
-/** 列表栏的宽度。分隔条那 3px ＋ 两侧 4px 边距不从这里扣——
- *  详情栏是 flex:1，会自然吃掉剩下的，列表栏只要占准自己的那一份 */
-const listStyle = computed(() => ({
-  width: `${divider.size.value * 100}%`,
-}));
-
-/**
- * 右半边的标题用列表里那条提交本身，不再为它单取一次（行数据已经全在这儿了）。
- * 列表里没有它（从文件历史/blame 跳过来的提交）时用详情状态里单取的那条。
- */
 const selectedCommit = computed(() => {
   const sha = detail.sha;
   if (sha === null) return null;
   return commitStore.commits.find((commit) => commit.id === sha) ?? detail.row;
 });
 
-/** 筛选条的 type 候选。与提交表单读的是同一份规范（需求 6.7） */
 const typeOptions = ref<string[]>([]);
 
-/** 规范读不到时给 Conventional Commits 的常规几类：下拉空着比给一份无关的清单更糟 */
-const FALLBACK_TYPES = [
-  "feat",
-  "fix",
-  "docs",
-  "refactor",
-  "style",
-  "test",
-  "perf",
-  "build",
-  "ci",
-  "chore",
-  "revert",
-];
+const FALLBACK_TYPES = ["feat", "fix", "docs", "refactor", "style", "test", "perf", "build", "ci", "chore", "revert"];
 
-/** 已经画出来的行。翻页失败时用它决定"整页报错"还是"列表照留、只在底部报错" */
 const hasRows = computed(() => commitStore.commits.length > 0);
 
-/** 离底还有这么多像素就去取下一页：约 13 行，够把一次请求的等待盖掉 */
 const LOAD_AHEAD_PX = 600;
 
 function loadMore() {
   if (repoId.value !== null) commitStore.loadMore(repoId.value);
 }
 
-/** 滚动事件由虚拟列表自己的滚动容器发出，target 就是那个容器 */
-function onScroll(event: Event) {
-  const el = event.target as HTMLElement;
+function onScrollbarScroll(e: Event) {
+  const el = e.target as HTMLElement;
   if (el.scrollHeight - el.scrollTop - el.clientHeight > LOAD_AHEAD_PX) return;
   loadMore();
 }
 
-/** 再点一次同一条就收起右半边：一屏两栏时，右半占的地方不该由一次误点长期占着 */
 function pick(sha: string) {
   const commit = commitStore.commits.find((item) => item.id === sha) ?? null;
-  if (detail.sha === sha) {
-    detail.close();
-    return;
-  }
+  if (detail.sha === sha) { detail.close(); return; }
   if (repoId.value === null) return;
   void detail.open(repoId.value, sha, commit);
 }
 
-// ---------------------------------------------------------------- 键盘导航
+const paneSize = ref(0.6);
+function onSplitUpdate(val: number) { paneSize.value = val; }
 
-const listRef = ref<VirtualListInst | null>(null);
-
-/** 「传出的更改」分节标题那一行的 key。用一个不可能撞上 sha 的串 */
-const OUTGOING_KEY = "__outgoing__";
-
-/**
- * 虚拟列表的条目：提交行，外加一个「传出的更改」分节标题。
- *
- * 标题插在当前页**第一条未推送提交**的前面：未推送的那批永远是 HEAD 这一侧，
- * 也就是列表最上面，读起来就是"从这条往上是还没推出去的"（Fork 那个样式）。
- * 没有上游、或已经全部推出去时，`unpushed` 全为 false，标题自然不出现。
- *
- * 标题与提交行**必须同高**：naive 的虚拟列表 `item-size` 只收数字（2.45.3 实测），
- * 给标题单独一个高度会让后面每一行的位置都算错，所以它也只能占满一行。
- */
-type CommitListItem =
-  | { kind: "header"; id: string }
-  | { kind: "commit"; id: string; commit: Commit };
-
-const listItems = computed<CommitListItem[]>(() => {
-  const items: CommitListItem[] = commitStore.commits.map((commit) => ({
-    kind: "commit",
-    id: commit.id,
-    commit,
-  }));
-  const first = items.findIndex((item) => item.kind === "commit" && item.commit.unpushed);
-  if (first >= 0) items.splice(first, 0, { kind: "header", id: OUTGOING_KEY });
-  return items;
-});
-
-/** 分节标题右侧挂的当前分支名。游离 HEAD 时没有名字，只显示「传出的更改」 */
+/* ---- 传出的更改分节 ---- */
 const outgoingBranch = computed(() => repos.repoState?.branch ?? null);
+const firstUnpushedIndex = computed(() =>
+  commitStore.commits.findIndex((c) => c.unpushed),
+);
 
-/** 当前选中项在可见列表里的下标；-1 表示还没选 */
+/* ---- 提交行 type 颜色 ---- */
+const TYPE_COLORS: Record<string, "success" | "error" | "warning" | "info"> = {
+  feat: "success", fix: "error", perf: "warning", refactor: "warning",
+  docs: "info", test: "info", build: "info", ci: "info",
+};
+function typeColor(commit: Commit) {
+  return commit.commitType ? (TYPE_COLORS[commit.commitType] ?? "default") : "default";
+}
+function typeLabel(commit: Commit) {
+  return commit.commitType ?? "非规范";
+}
+
+/* ---- 键盘导航 ---- */
 const selectedIndex = computed(() => {
   const sha = detail.sha;
   if (sha === null) return -1;
@@ -183,23 +109,16 @@ const selectedIndex = computed(() => {
 });
 
 function selectAt(index: number) {
-  const commits = commitStore.commits;
-  const commit = commits[index];
+  const commit = commitStore.commits[index];
   if (!commit || repoId.value === null) return;
   void detail.open(repoId.value, commit.id, commit);
-  // 键盘往下走时视口不会自己跟，得手动滚过去
-  listRef.value?.scrollTo({ key: commit.id });
 }
 
 function onKeyDown(event: KeyboardEvent) {
-  // 带修饰键的组合留给浏览器（复制粘贴、刷新等）
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (isTypingTarget(event.target)) return;
 
   if (event.key === "Escape") {
-    // 只关详情。弹层自己也会吃掉 Esc——它先关自己，这一条是余下的那一次；
-    // 用户在弹层里按 Esc 时会看到“弹层关了、详情也关了”，属于可接受的粗糙，
-    // 比去侦测“当前有没有弹层开着”可靠
     if (detail.sha === null) return;
     detail.close();
     event.preventDefault();
@@ -211,7 +130,6 @@ function onKeyDown(event: KeyboardEvent) {
   const at = selectedIndex.value;
 
   if (event.key === "ArrowDown" || event.key === "j") {
-    // 没选过时往下 = 选第一条，而不是跳过第一条
     selectAt(at === -1 ? 0 : Math.min(at + 1, commits.length - 1));
     event.preventDefault();
   } else if (event.key === "ArrowUp" || event.key === "k") {
@@ -220,13 +138,10 @@ function onKeyDown(event: KeyboardEvent) {
   }
 }
 
-// ---------------------------------------------------------------- 右键菜单
-
+/* ---- 右键菜单 ---- */
 const menu = reactive({ show: false, x: 0, y: 0, sha: "" });
 
 function openMenu(event: MouseEvent, sha: string) {
-  // 右键也选中那一行：菜单里的“摘取 / 回滚 / 重置”都是针对这条的，
-  // 而详情面板停在另一条上会让人以为菜单点错了
   const commit = commitStore.commits.find((item) => item.id === sha) ?? null;
   if (repoId.value !== null && detail.sha !== sha) {
     void detail.open(repoId.value, sha, commit);
@@ -237,9 +152,7 @@ function openMenu(event: MouseEvent, sha: string) {
   menu.show = true;
 }
 
-function closeMenu() {
-  menu.show = false;
-}
+function closeMenu() { menu.show = false; }
 
 const menuOptions = computed<DropdownOption[]>(() => {
   const commit = commitStore.commits.find((item) => item.id === menu.sha);
@@ -248,8 +161,6 @@ const menuOptions = computed<DropdownOption[]>(() => {
   return [
     { label: "摘取到当前分支", key: "pick", disabled: !writable },
     {
-      // 合并提交的回滚必须选主线（§7.11），那个选择不能由工具替用户做，
-      // 所以菜单里禁用它，让用户去详情面板那边选
       label: commit.merge ? "回滚这条（合并提交需在详情里选主线）" : "回滚这条",
       key: "revert",
       disabled: !writable || commit.merge,
@@ -265,7 +176,6 @@ const menuOptions = computed<DropdownOption[]>(() => {
     },
     { type: "divider", key: "divider-1" },
     {
-      // 改写区间是「这条之后到 HEAD」，含不含这条由面板里的 todo 决定
       label: "从这里开始改写",
       key: "rewrite",
       disabled: !writable || commit.id === repos.info?.headCommit,
@@ -280,7 +190,6 @@ async function copyText(text: string, what: string) {
     await navigator.clipboard.writeText(text);
     message.success(`已复制${what}`);
   } catch {
-    // WebView2 在非安全上下文里会拒绝；告知用户而不是静默失败
     message.warning(`复制失败，${what}：${text}`);
   }
 }
@@ -289,31 +198,17 @@ function onMenuSelect(key: string) {
   const commit = commitStore.commits.find((item) => item.id === menu.sha);
   closeMenu();
   if (!commit) return;
-  if (key === "copy-sha") {
-    void copyText(commit.id, "提交号");
-    return;
-  }
-  if (key === "copy-subject") {
-    void copyText(commit.subject, "标题");
-    return;
-  }
-  if (key === "rewrite") {
-    void writes.openRewrite(commit.id);
-    return;
-  }
+  if (key === "copy-sha") { void copyText(commit.id, "提交号"); return; }
+  if (key === "copy-subject") { void copyText(commit.subject, "标题"); return; }
+  if (key === "rewrite") { void writes.openRewrite(commit.id); return; }
 
   const run = async () => {
-    if (key === "pick") {
-      await writes.pick(commit.id);
-    } else if (key === "revert") {
-      await writes.revert(commit.id, null);
-    } else if (key.startsWith("reset:")) {
-      await writes.reset(key.slice("reset:".length) as "soft" | "mixed" | "hard", commit.id);
-    }
+    if (key === "pick") await writes.pick(commit.id);
+    else if (key === "revert") await writes.revert(commit.id, null);
+    else if (key.startsWith("reset:")) await writes.reset(key.slice("reset:".length) as "soft" | "mixed" | "hard", commit.id);
   };
 
   if (key === "reset:hard") {
-    // 丢数据的操作不给一键就走的路
     dialog.warning({
       title: "重置到这条提交（hard）",
       content: `会扔掉 ${commit.id.slice(0, 8)} 之后的全部提交，以及工作区里未提交的改动。`,
@@ -326,10 +221,8 @@ function onMenuSelect(key: string) {
   void run();
 }
 
-/** 换筛选：列表与图一起按新的可见集合重算（§7.7） */
 function applyFilter(next: CommitFilter) {
   if (repoId.value === null) return;
-  // 换集合后原来选中的那条很可能不在里面了，右半边一起收掉
   detail.close();
   void commitStore.applyFilter(repoId.value, next);
 }
@@ -340,7 +233,6 @@ function clearFilter() {
   void commitStore.clearFilter(repoId.value);
 }
 
-/** 筛选项里的 type 候选直接来自仓库规范，与提交表单、报告共用同一份尺子 */
 async function loadTypes() {
   const id = repoId.value;
   if (id === null) return;
@@ -355,9 +247,7 @@ async function loadTypes() {
 }
 
 onMounted(async () => {
-  // 直接命中 hash 路由时注册表可能还没取回来
   if (repos.repos.length === 0) await repos.load();
-  // 上一次离开这一页时选中的那条不该跟着过来：清单和 diff 都按提交号取
   detail.close();
   if (repoId.value !== null) {
     void commitStore.open(repoId.value);
@@ -365,7 +255,6 @@ onMounted(async () => {
   }
 });
 
-/** 页签常驻，切仓库不会重新挂载：不盯住 currentId 的话列表会停在旧仓库上 */
 watch(repoId, (id) => {
   detail.close();
   if (id === null) return;
@@ -373,17 +262,10 @@ watch(repoId, (id) => {
   void loadTypes();
 });
 
-// 键盘监听挂在 window 上：焦点在列表里的哪一行都不影响它能收到。
-// 只在这一页存活时绑定，否则在「提交」页按 j 也会改历史页的选中项。
 onMounted(() => window.addEventListener("keydown", onKeyDown));
 onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 
-/**
- * 外壳快捷键（Ctrl+F / F5）登记在这一页名下。
- *
- * `refresh` 要走「按当前筛选重开列表」而不是简单重读仓库：这一页的筛选条件在
- * `commitStore` 里，只有重新 `open` 才会带着筛选跑一遍图计算。
- */
+import { provideShell } from "@/shell";
 let releaseSearch: (() => void) | undefined;
 let releaseRefresh: (() => void) | undefined;
 onMounted(() => {
@@ -400,15 +282,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <n-empty
-      v-if="repoId === null"
-      description="在左侧添加或打开一个仓库"
-      class="placeholder"
-    />
+    <n-empty v-if="repoId === null" description="在左侧添加或打开一个仓库" class="placeholder" />
 
     <template v-else>
       <filter-bar
-        v-if="repoId !== null"
         ref="filterBar"
         :filter="commitStore.filter"
         :refs="repos.refs"
@@ -418,132 +295,149 @@ onBeforeUnmount(() => {
         @clear="clearFilter"
       />
 
-      <div ref="split" class="split" :class="{ resizing: divider.dragging.value }">
-        <section class="list-pane" :style="listStyle">
-          <n-alert
-            v-if="commitStore.error && !hasRows"
-            type="error"
-            :title="commitStore.error.message"
-          >
-            <div>错误码：{{ commitStore.error.code }}</div>
-            <pre v-if="commitStore.error.detail" class="raw-output">{{ commitStore.error.detail }}</pre>
-          </n-alert>
-
-          <template v-else>
-            <!--
-              图列失败不该把列表一起拖没：这条提示用独立的 v-if，不参与下面那串
-              "空仓库 / 等图 / 列表"的分支，列表照画。
-            -->
+      <!-- 左右分栏：列表 + 提交详情；未选中提交时列表占满全宽 -->
+      <n-split
+        direction="horizontal"
+        :size="detail.sha ? paneSize : 1"
+        :min="0.2"
+        :max="0.8"
+        :resize-trigger-size="detail.sha ? 3 : 0"
+        class="split"
+        @update:size="onSplitUpdate"
+      >
+        <template #1>
+          <div class="list-pane">
             <n-alert
-              v-if="commitStore.graphError"
-              type="warning"
-              :title="`图列读取失败：${commitStore.graphError.message}`"
+              v-if="commitStore.error && !hasRows"
+              type="error"
+              :title="commitStore.error.message"
             >
-              <div>错误码：{{ commitStore.graphError.code }}</div>
-              <pre v-if="commitStore.graphError.detail" class="raw-output">{{ commitStore.graphError.detail }}</pre>
+              <div>错误码：{{ commitStore.error.code }}</div>
+              <pre v-if="commitStore.error.detail" class="raw-output">{{ commitStore.error.detail }}</pre>
             </n-alert>
 
-            <n-empty
-              v-if="!commitStore.loading && commitStore.total === 0"
-              description="空仓库，尚无提交"
-            />
+            <template v-else>
+              <n-alert
+                v-if="commitStore.graphError"
+                type="warning"
+                :title="`图列读取失败：${commitStore.graphError.message}`"
+              >
+                <div>错误码：{{ commitStore.graphError.code }}</div>
+              </n-alert>
 
-            <!--
-              列宽一次定死后不再随翻页变，但第一页拿到图数据之前只能先空着。
-              这时候先占位而不是画窄列再撑宽：已经画出去的行横向跳动比等一下更糟。
-            -->
-            <div v-else-if="!commitStore.graphReady" class="graph-waiting">
-              <n-spin size="small" />
-              <span class="muted">正在读这条分支的历史走向，第一次要把父子关系整条走一遍…</span>
-            </div>
+              <n-empty
+                v-if="!commitStore.loading && commitStore.commits.length === 0"
+                description="空仓库，尚无提交"
+              />
 
-            <!--
-              ⚠️ 这个插槽里**不能写注释**（标签外面随便写）。vueuc 渲染每一行时只取
-              `$slots.default({ item })[0]` 这一个 vnode，而 dev 模式的模板编译会把
-              HTML 注释保留成注释 vnode（`vite build` 才会剥掉，所以构建期发现不了）。
-              注释一旦排在插槽第一个，它就会顶掉整行——表现是标题和提交行全部消失、
-              列表一片空白，但底部「共 N 条」照常显示，极难反查。
-            -->
-            <n-virtual-list
-              v-else
-              ref="listRef"
-              :items="listItems"
-              :item-size="COMMIT_ROW_HEIGHT"
-              key-field="id"
-              class="commit-list"
-              @scroll="onScroll"
-            >
-              <template #default="{ item }">
-                <div
-                  v-if="item.kind === 'header'"
-                  class="outgoing-header"
-                  :style="{ height: `${COMMIT_ROW_HEIGHT}px` }"
-                >
-                  <span class="outgoing-marker" />
-                  <span class="outgoing-label">传出的更改</span>
-                  <code v-if="outgoingBranch" class="outgoing-branch">{{ outgoingBranch }}</code>
-                </div>
-                <commit-row
-                  v-else
-                  :commit="item.commit"
-                  :row="commitStore.rowFor(item.id)"
-                  :lanes="commitStore.graphLanes"
-                  :selected="item.id === detail.sha"
-                  :columns="prefs"
-                  @click="pick(item.id)"
-                  @contextmenu="openMenu($event, item.id)"
-                />
-              </template>
-            </n-virtual-list>
-          </template>
-
-          <!--
-            计数行沉到这里，与「已全部加载 / 下一段读取中」同属“列表现在到哪了”。
-            原来它单独占一行在列表上方，而下面已经有了一行状态——两处说同一件事。
-          -->
-          <n-space align="center" class="status-line">
-            <span class="muted">共 {{ commitStore.total }} 条</span>
-            <span v-if="commitStore.commits.length" class="muted">
-              已读出 {{ commitStore.commits.length }} 条
-            </span>
-            <span v-if="commitStore.graphLoading" class="muted">历史走向读取中…</span>
-            <!--
-              解析层筛选（type / 合规）要分段扫历史，扫到上限时 Rust 会置位。
-              这时候“共 N 条”与实得条数可能对不上，必须写明，不能让人以为那就是全部。
-            -->
-            <span v-if="commitStore.truncated" class="scanned">
-              只扫了历史的前一段，下面可能还有
-            </span>
-
-            <template v-if="commitStore.error && hasRows">
-              <span class="muted">读取下一页失败：{{ commitStore.error.message }}</span>
-              <n-button size="small" @click="loadMore">重试</n-button>
+              <!-- 提交记录列表：n-table + CommitGraph 网络图 -->
+              <n-scrollbar
+                v-if="commitStore.commits.length > 0"
+                class="commit-scroll"
+                @scroll="onScrollbarScroll"
+              >
+                <n-table :bordered="false" :single-line="false" size="small" class="commit-table">
+                  <thead>
+                    <tr>
+                      <th class="col-graph"></th>
+                      <th v-if="prefs.refs" class="col-branch">分支</th>
+                      <th>提交信息</th>
+                      <th v-if="prefs.sha" class="col-sha">哈希</th>
+                      <th v-if="prefs.author" class="col-author">提交人</th>
+                      <th v-if="prefs.time" class="col-time">提交时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <!-- 传出的更改分节标题 -->
+                    <tr v-if="firstUnpushedIndex >= 0" class="outgoing-header-row">
+                      <td :colspan="6">
+                        <span class="outgoing-marker" />
+                        <span class="outgoing-label">传出的更改</span>
+                        <code v-if="outgoingBranch" class="outgoing-branch">{{ outgoingBranch }}</code>
+                      </td>
+                    </tr>
+                    <tr
+                      v-for="commit in commitStore.commits"
+                      :key="commit.id"
+                      class="commit-tr"
+                      :class="{ selected: commit.id === detail.sha }"
+                      @click="pick(commit.id)"
+                      @contextmenu.prevent="openMenu($event, commit.id)"
+                    >
+                      <!-- Git 提交网络图 -->
+                      <td class="cell-graph">
+                        <commit-graph
+                          :commit="commit"
+                          :row="commitStore.rowFor(commit.id)"
+                          :lanes="commitStore.graphLanes"
+                        />
+                      </td>
+                      <!-- 分支引用 -->
+                      <td v-if="prefs.refs" class="cell-refs">
+                        <div class="refs">
+                          <span v-if="commit.head && !commit.refs.some((b) => b.head)" class="badge current">HEAD</span>
+                          <span
+                            v-for="badge in commit.refs.slice(0, 4)"
+                            :key="`${badge.kind}:${badge.name}`"
+                            class="badge"
+                            :class="[badge.kind, { head: badge.head }]"
+                          >{{ badge.name }}</span>
+                          <span v-if="commit.refs.length > 4" class="badge more">+{{ commit.refs.length - 4 }}</span>
+                        </div>
+                      </td>
+                      <!-- 提交信息 -->
+                      <td class="cell-subject">
+                        <n-tag :type="typeColor(commit)" size="small" :bordered="false" class="type-tag">{{ typeLabel(commit) }}</n-tag>
+                        <n-tag v-if="commit.scope" size="small" :bordered="false">{{ commit.scope }}</n-tag>
+                        <n-tag v-if="commit.breaking" type="error" size="small" :bordered="false">!</n-tag>
+                        <n-tag v-if="commit.merge" type="warning" size="small" :bordered="false">merge</n-tag>
+                        <span class="subject" :title="commit.subject">{{ commit.subject }}</span>
+                      </td>
+                      <!-- 哈希 -->
+                      <td v-if="prefs.sha" class="cell-sha">
+                        <code>{{ commit.id.slice(0, 8) }}</code>
+                      </td>
+                      <!-- 提交人 -->
+                      <td v-if="prefs.author" class="cell-author">{{ commit.authorName }}</td>
+                      <!-- 提交时间 -->
+                      <td v-if="prefs.time" class="cell-time">
+                        {{ dayjs(commit.time * 1000).format("YYYY-MM-DD HH:mm") }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </n-table>
+              </n-scrollbar>
             </template>
-            <n-spin v-else-if="commitStore.loading" size="small" />
-            <span v-else-if="hasRows && commitStore.loadedAll" class="muted">已全部加载</span>
-          </n-space>
-        </section>
 
-        <!-- 分隔条：3px 透明热区，悬停/拖动时才显出那条 1px 线。给双击回默认 -->
-        <div
-          class="divider"
-          role="separator"
-          aria-orientation="vertical"
-          :aria-valuenow="Math.round(divider.size.value * 100)"
-          :title="'拖动调宽窄，双击恢复默认'"
-          @pointerdown="divider.onPointerDown"
-          @dblclick="divider.reset"
-        />
+            <!-- 状态行 -->
+            <n-space align="center" class="status-line">
+              <span class="muted">共 {{ commitStore.total }} 条</span>
+              <span v-if="commitStore.commits.length" class="muted">已读出 {{ commitStore.commits.length }} 条</span>
+              <span v-if="commitStore.graphLoading" class="muted">历史走向读取中…</span>
+              <span v-if="commitStore.truncated" class="scanned">只扫了历史的前一段，下面可能还有</span>
+              <template v-if="commitStore.error && hasRows">
+                <span class="muted">读取下一页失败：{{ commitStore.error.message }}</span>
+                <n-button size="small" @click="loadMore">重试</n-button>
+              </template>
+              <n-spin v-else-if="commitStore.loading" size="small" />
+              <span v-else-if="hasRows && commitStore.loadedAll" class="muted">已全部加载</span>
+            </n-space>
+          </div>
+        </template>
 
-        <section class="detail-pane">
-          <commit-detail :repo-id="repoId" :commit="selectedCommit" />
-        </section>
-      </div>
+        <template #2>
+          <div v-if="detail.sha" class="detail-pane">
+            <div class="detail-head">
+              <span class="detail-title">提交详情</span>
+              <n-button quaternary size="tiny" title="关闭" @click="detail.close()">✕</n-button>
+            </div>
+            <n-scrollbar class="detail-scroll">
+              <commit-detail :repo-id="repoId" :commit="selectedCommit" />
+            </n-scrollbar>
+          </div>
+        </template>
+      </n-split>
 
-      <!--
-        右键菜单挂在页面层而不是每一行：虚拟列表的每一行都挂一个菜单的话，
-        翻页时成百个实例跟着建拆，而同一时刻只有一个是开的。
-      -->
       <n-dropdown
         trigger="manual"
         placement="bottom-start"
@@ -560,7 +454,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .page {
-  /* 外壳的 .content 已经把剩余高度给过来了，这里按列分给它，不再拿 100vh 去猜 */
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -568,51 +461,25 @@ onBeforeUnmount(() => {
 }
 
 .split {
-  display: flex;
-  gap: 0;
   flex: 1;
   min-height: 0;
 }
-
-/* 拖的时候整栏不要有选择高亮跟着跑，也不要让鼠标变成箭头 */
-.split.resizing {
-  cursor: col-resize;
-  user-select: none;
-}
-
-/*
- * 分隔条本体只占 3px 布局宽度——两栏本来就贴着，常驻一条宽条会把它们切成两块
- * 「各自独立」的区域，而它们其实是一件事的两面。
- *
- * 热区用伪元素向两侧扩到 15px：3px 拖起来是拿不住的（WCAG 2.5.8 的下限是 24px，
- * 分隔条按惯例可以例外，但 3px 真的抓不住）。伪元素不吃布局，所以宽度不占地方。
- */
-.divider {
-  position: relative;
-  flex: none;
-  width: 3px;
-  margin: 0 4px;
-  cursor: col-resize;
-  border-radius: 2px;
-  transition: background 120ms ease;
-}
-
-.divider::after {
-  content: "";
-  position: absolute;
-  inset: 0 -6px;
-}
-
-.divider:hover,
-.split.resizing .divider {
-  background: var(--accent);
+.split :deep(.n-split-pane) {
+  height: 100%;
+  overflow: hidden;
 }
 
 .list-pane {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  height: 100%;
   min-width: 0;
+}
+
+.commit-scroll {
+  flex: 1;
+  min-height: 0;
 }
 
 .status-line {
@@ -621,101 +488,142 @@ onBeforeUnmount(() => {
 }
 
 .detail-pane {
-  flex: 1;
-  min-width: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  /* 里面自己滚动：清单和差异各占一段，不能让这一栏整体撑高把窗口拖出滚动条 */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   overflow: hidden;
 }
-
-.muted {
-  font-size: 12px;
-  opacity: 0.7;
-}
-
-.scanned {
-  color: var(--warn-text);
-  opacity: 1;
-}
-
-.graph-waiting {
+.detail-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 120px;
-  padding: 0 16px;
+  justify-content: space-between;
+  flex: none;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
   background: var(--surface);
-  border-radius: 6px;
-  border: 1px solid var(--border);
 }
-
-.commit-list {
-  /* 吃掉本栏剩下的全部高度。以前写 calc(100vh - 190px)，那个 190 是手调的，
-     上方行数一变（计数行、中断提示条、底部状态行）就差出几十像素的空白 */
+.detail-title { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.detail-scroll {
   flex: 1;
   min-height: 0;
-  background: var(--surface);
-  border-radius: 6px;
-  border: 1px solid var(--border);
 }
-
-.placeholder {
-  padding-top: 20vh;
-}
-
-/*
- * 「传出的更改」分节标题。
- *
- * 盒模型与 `.commit-row` 逐项对齐：同样的下边框、同样的 0 10px 内边距（高度由模板里
- * 绑定的 COMMIT_ROW_HEIGHT 给）。差一点点的话，虚拟列表按 item-size 算的位置会
- * 一行行累积错位——所以这里不是"差不多就行"，是必须和第 30 行完全同形。
- */
-.outgoing-header {
+.list-pane.full {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--border-soft);
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-width: 0;
+}
+
+/* 提交表 */
+.commit-table {
   font-size: 12px;
-  color: var(--text-2);
+  width: 100%;
+  table-layout: fixed;
 }
 
-/* 与图列里未推送提交同色的一个小圆点，一眼把标题和下面那批线绑在一起 */
-.outgoing-marker {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  margin-left: 4px;
-  border-radius: 50%;
-  background: var(--outgoing);
-}
-
-.outgoing-label {
-  flex: none;
+.commit-table :deep(thead th) {
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-1);
+  color: var(--text-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 4px 8px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
-.outgoing-branch {
-  flex: none;
-  max-width: 40%;
+.commit-table :deep(tbody tr) {
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.commit-table :deep(tbody tr:hover) {
+  background: var(--surface-hover);
+}
+
+.commit-table :deep(tbody tr.selected) {
+  background: var(--surface-selected);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.commit-table :deep(td) {
+  padding: 0 8px;
+  border-bottom: none;
+  height: 30px;
+  vertical-align: middle;
+  box-shadow: inset 0 -1px 0 var(--border-soft);
+}
+
+.col-graph { width: 60px; padding: 0 !important; }
+.cell-graph { padding: 0 !important; vertical-align: middle; border-bottom: none !important; line-height: 0; }
+.commit-table :deep(td.cell-graph) { box-shadow: none !important; }
+
+
+.col-branch { width: 180px; }
+.cell-refs { white-space: nowrap; }
+
+.refs { display: flex; align-items: center; gap: 3px; max-width: 200px; overflow: hidden; }
+
+.badge {
+  flex: none; max-width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 15px;
+}
+.badge.branch { color: var(--badge-branch-text); background: var(--badge-branch-bg); }
+.badge.remote { color: var(--badge-remote-text); background: var(--badge-remote-bg); }
+.badge.tag { color: var(--badge-tag-text); background: var(--badge-tag-bg); }
+.badge.current { color: var(--badge-head-text); background: var(--badge-head-bg); }
+.badge.head { font-weight: 600; box-shadow: inset 0 0 0 1px currentColor; }
+.badge.more { color: var(--badge-more-text); background: var(--badge-more-bg); }
+
+.cell-subject { padding: 0 8px; display: flex; align-items: center; gap: 4px; overflow: hidden; }
+.type-tag { flex: none; min-width: 44px; justify-content: center; }
+.subject {
+  margin-left: 6px;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  padding: 0 6px;
-  border-radius: 9px;
-  font-size: 11px;
-  line-height: 15px;
-  color: var(--badge-branch-text);
-  background: var(--badge-branch-bg);
 }
 
-.raw-output {
-  margin: 8px 0 0;
-  white-space: pre-wrap;
+.col-sha { width: 80px; }
+.col-sha, .cell-sha { font-family: var(--font-mono); }
+.cell-sha code { font-size: 11px; color: var(--text-3); }
+
+.col-author { width: 100px; }
+.col-author, .cell-author { white-space: nowrap; }
+.cell-author { font-size: 11px; color: var(--text-2); }
+
+.col-time { width: 140px; }
+.col-time, .cell-time { white-space: nowrap; }
+.cell-time { font-size: 11px; color: var(--text-3); }
+
+/* 传出的更改分节标题 */
+.outgoing-header-row td {
+  background: var(--surface-hover);
+  border-bottom: 1px solid var(--border);
   font-size: 12px;
-  opacity: 0.8;
+  padding: 0 10px;
+  height: 30px;
 }
+.outgoing-marker {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--outgoing); margin-right: 6px; vertical-align: middle;
+}
+.outgoing-label { font-weight: 600; color: var(--text-1); margin-right: 8px; }
+.outgoing-branch {
+  padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 15px;
+  color: var(--badge-branch-text); background: var(--badge-branch-bg);
+}
+
+.graph-waiting {
+  display: flex; align-items: center; gap: 10px; height: 120px; padding: 0 16px;
+}
+
+.placeholder { padding-top: 20vh; }
+.muted { font-size: 12px; opacity: 0.7; }
+.scanned { color: var(--warn-text); opacity: 1; }
+.raw-output { margin: 8px 0 0; white-space: pre-wrap; font-size: 12px; opacity: 0.8; }
 </style>
