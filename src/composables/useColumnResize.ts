@@ -48,10 +48,16 @@ export function useColumnResize(group: string, specs: ColumnSpec[]) {
       event.preventDefault();
       event.stopPropagation();
       const startX = event.clientX;
+      const startWidth = widths[key] ?? 0;
       let moved = false;
       const prev = document.body.style.userSelect;
       document.body.style.userSelect = "none";
-      const onMove = (m: PointerEvent) => { moved = true; resize(key, m.clientX - startX); };
+      const onMove = (m: PointerEvent) => {
+        moved = true;
+        const spec = specs.find((s) => s.key === key);
+        if (!spec || spec.flex) return;
+        widths[key] = Math.max(spec.minWidth, startWidth + (m.clientX - startX));
+      };
       const onUp = () => {
         document.body.style.userSelect = prev;
         if (moved) persist(`${group}:${key}`, widths[key]);
