@@ -6,17 +6,14 @@ import {
   NButton,
   NDropdown,
   NEmpty,
-  NScrollbar,
   NSpace,
   NSpin,
-  NSplit,
-  NTable,
   NTag,
   useDialog,
   useMessage,
   type DropdownOption,
-  } from "naive-ui";
-import CommitGraph from "@/components/CommitGraph.vue";
+} from "naive-ui";
+import CommitGraphPanel from "@/components/CommitGraphPanel.vue";
 import CommitDetail from "@/components/CommitDetail.vue";
 import FilterBar from "@/components/FilterBar.vue";
 import { useCommitStore } from "@/stores/commits";
@@ -25,13 +22,10 @@ import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
 import { specFor } from "@/api/spec";
 import { usePrefsStore } from "@/stores/prefs";
+import { usePaneDivider } from "@/composables/usePaneDivider";
 import { isTypingTarget } from "@/shortcuts";
-import type { Commit, CommitFilter } from "@/api/commit";
+import type { Commit, CommitFilter, GraphRow } from "@/api/commit";
 
-/**
- * 历史页（重构）：n-split 左右分栏，左栏用 n-table 展示提交记录，
- * 配合 CommitGraph 渲染 Git 提交网络图；右栏是选中提交的 Diff 详情。
- */
 const repos = useReposStore();
 const prefsStore = usePrefsStore();
 const commitStore = useCommitStore();
@@ -41,7 +35,6 @@ const dialog = useDialog();
 const message = useMessage();
 
 const repoId = computed(() => repos.currentId);
-
 const filterBar = ref<InstanceType<typeof FilterBar> | null>(null);
 
 const prefs = computed(
@@ -52,44 +45,53 @@ const prefs = computed(
 const selectedCommit = computed(() => {
   const sha = detail.sha;
   if (sha === null) return null;
-  return commitStore.commits.find((commit) => commit.id === sha) ?? detail.row;
+  return commitStore.commits.find((c) => c.id === sha) ?? detail.row;
 });
 
 const typeOptions = ref<string[]>([]);
-
 const FALLBACK_TYPES = ["feat", "fix", "docs", "refactor", "style", "test", "perf", "build", "ci", "chore", "revert"];
-
 const hasRows = computed(() => commitStore.commits.length > 0);
-
 const LOAD_AHEAD_PX = 600;
 
 function loadMore() {
   if (repoId.value !== null) commitStore.loadMore(repoId.value);
 }
 
-function onScrollbarScroll(e: Event) {
-  const el = e.target as HTMLElement;
+/** 唯一的滚动容器：分支图与提交列表共享，不需要手动同步滚动 */
+const scrollEl = ref<HTMLElement | null>(null);
+
+function onScroll() {
+  const el = scrollEl.value;
+  if (!el) return;
   if (el.scrollHeight - el.scrollTop - el.clientHeight > LOAD_AHEAD_PX) return;
   loadMore();
 }
 
 function pick(sha: string) {
-  const commit = commitStore.commits.find((item) => item.id === sha) ?? null;
+  const commit = commitStore.commits.find((c) => c.id === sha) ?? null;
   if (detail.sha === sha) { detail.close(); return; }
   if (repoId.value === null) return;
   void detail.open(repoId.value, sha, commit);
 }
 
-const paneSize = ref(0.6);
-function onSplitUpdate(val: number) { paneSize.value = val; }
+/** 详情栏的分栏宽度 */
+const splitContainer = ref<HTMLElement | null>(null);
+const divider = usePaneDivider({
+  container: splitContainer,
+  storageKey: "git-tidy:history:detail",
+  fallback: 0.4,
+  min: 0.2,
+  max: 0.6,
+  unit: "ratio",
+  containerMinWidth: 400,
+});
+const showDetail = computed(() => detail.sha !== null);
 
-/* ---- 传出的更改分节 ---- */
 const outgoingBranch = computed(() => repos.repoState?.branch ?? null);
 const firstUnpushedIndex = computed(() =>
   commitStore.commits.findIndex((c) => c.unpushed),
 );
 
-/* ---- 提交行 type 颜色 ---- */
 const TYPE_COLORS: Record<string, "success" | "error" | "warning" | "info"> = {
   feat: "success", fix: "error", perf: "warning", refactor: "warning",
   docs: "info", test: "info", build: "info", ci: "info",
@@ -105,7 +107,7 @@ function typeLabel(commit: Commit) {
 const selectedIndex = computed(() => {
   const sha = detail.sha;
   if (sha === null) return -1;
-  return commitStore.commits.findIndex((item) => item.id === sha);
+  return commitStore.commits.findIndex((c) => c.id === sha);
 });
 
 function selectAt(index: number) {
@@ -117,18 +119,15 @@ function selectAt(index: number) {
 function onKeyDown(event: KeyboardEvent) {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (isTypingTarget(event.target)) return;
-
   if (event.key === "Escape") {
     if (detail.sha === null) return;
     detail.close();
     event.preventDefault();
     return;
   }
-
   const commits = commitStore.commits;
   if (!commits.length) return;
   const at = selectedIndex.value;
-
   if (event.key === "ArrowDown" || event.key === "j") {
     selectAt(at === -1 ? 0 : Math.min(at + 1, commits.length - 1));
     event.preventDefault();
@@ -142,7 +141,7 @@ function onKeyDown(event: KeyboardEvent) {
 const menu = reactive({ show: false, x: 0, y: 0, sha: "" });
 
 function openMenu(event: MouseEvent, sha: string) {
-  const commit = commitStore.commits.find((item) => item.id === sha) ?? null;
+  const commit = commitStore.commits.find((c) => c.id === sha) ?? null;
   if (repoId.value !== null && detail.sha !== sha) {
     void detail.open(repoId.value, sha, commit);
   }
@@ -155,7 +154,7 @@ function openMenu(event: MouseEvent, sha: string) {
 function closeMenu() { menu.show = false; }
 
 const menuOptions = computed<DropdownOption[]>(() => {
-  const commit = commitStore.commits.find((item) => item.id === menu.sha);
+  const commit = commitStore.commits.find((c) => c.id === menu.sha);
   if (!commit) return [];
   const writable = writes.canWrite;
   return [
@@ -195,19 +194,17 @@ async function copyText(text: string, what: string) {
 }
 
 function onMenuSelect(key: string) {
-  const commit = commitStore.commits.find((item) => item.id === menu.sha);
+  const commit = commitStore.commits.find((c) => c.id === menu.sha);
   closeMenu();
   if (!commit) return;
   if (key === "copy-sha") { void copyText(commit.id, "提交号"); return; }
   if (key === "copy-subject") { void copyText(commit.subject, "标题"); return; }
   if (key === "rewrite") { void writes.openRewrite(commit.id); return; }
-
   const run = async () => {
     if (key === "pick") await writes.pick(commit.id);
     else if (key === "revert") await writes.revert(commit.id, null);
     else if (key.startsWith("reset:")) await writes.reset(key.slice("reset:".length) as "soft" | "mixed" | "hard", commit.id);
   };
-
   if (key === "reset:hard") {
     dialog.warning({
       title: "重置到这条提交（hard）",
@@ -245,6 +242,16 @@ async function loadTypes() {
     typeOptions.value = [...FALLBACK_TYPES];
   }
 }
+
+/** 分支图所需的 GraphRow 列表（只含有数据的行） */
+const graphRows = computed<GraphRow[]>(() => {
+  const result: GraphRow[] = [];
+  for (const commit of commitStore.commits) {
+    const row = commitStore.rowFor(commit.id);
+    if (row) result.push(row);
+  }
+  return result;
+});
 
 onMounted(async () => {
   if (repos.repos.length === 0) await repos.load();
@@ -295,148 +302,131 @@ onBeforeUnmount(() => {
         @clear="clearFilter"
       />
 
-      <!-- 左右分栏：列表 + 提交详情；未选中提交时列表占满全宽 -->
-      <n-split
-        direction="horizontal"
-        :size="detail.sha ? paneSize : 1"
-        :min="0.2"
-        :max="0.8"
-        :resize-trigger-size="detail.sha ? 3 : 0"
-        class="split"
-        @update:size="onSplitUpdate"
-      >
-        <template #1>
-          <div class="list-pane">
-            <n-alert
-              v-if="commitStore.error && !hasRows"
-              type="error"
-              :title="commitStore.error.message"
-            >
-              <div>错误码：{{ commitStore.error.code }}</div>
-              <pre v-if="commitStore.error.detail" class="raw-output">{{ commitStore.error.detail }}</pre>
-            </n-alert>
+      <div ref="splitContainer" class="history-body">
+        <!-- 左右共享滚动区：分支图 + 提交列表 -->
+        <div ref="scrollEl" class="scroll-area" @scroll="onScroll">
+          <n-alert
+            v-if="commitStore.error && !hasRows"
+            type="error"
+            :title="commitStore.error.message"
+            class="banner-error"
+          >
+            <div>错误码：{{ commitStore.error.code }}</div>
+            <pre v-if="commitStore.error.detail" class="raw-output">{{ commitStore.error.detail }}</pre>
+          </n-alert>
 
-            <template v-else>
+          <n-empty
+            v-if="!commitStore.loading && commitStore.commits.length === 0"
+            description="空仓库，尚无提交"
+            class="empty-state"
+          />
+
+          <template v-if="hasRows">
+            <!-- 分支图（左列，sticky 定位使其在水平方向不随列表滚动） -->
+            <div class="graph-column">
               <n-alert
                 v-if="commitStore.graphError"
                 type="warning"
                 :title="`图列读取失败：${commitStore.graphError.message}`"
+                class="graph-error"
               >
                 <div>错误码：{{ commitStore.graphError.code }}</div>
               </n-alert>
-
-              <n-empty
-                v-if="!commitStore.loading && commitStore.commits.length === 0"
-                description="空仓库，尚无提交"
+              <commit-graph-panel
+                v-if="commitStore.graphReady"
+                :rows="graphRows"
+                :lanes="commitStore.graphLanes"
+                :selected-sha="detail.sha"
               />
-
-              <!-- 提交记录列表：n-table + CommitGraph 网络图 -->
-              <n-scrollbar
-                v-if="commitStore.commits.length > 0"
-                class="commit-scroll"
-                @scroll="onScrollbarScroll"
-              >
-                <n-table :bordered="false" :single-line="false" size="small" class="commit-table">
-                  <thead>
-                    <tr>
-                      <th class="col-graph"></th>
-                      <th v-if="prefs.refs" class="col-branch">分支</th>
-                      <th>提交信息</th>
-                      <th v-if="prefs.sha" class="col-sha">哈希</th>
-                      <th v-if="prefs.author" class="col-author">提交人</th>
-                      <th v-if="prefs.time" class="col-time">提交时间</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <!-- 传出的更改分节标题 -->
-                    <tr v-if="firstUnpushedIndex >= 0" class="outgoing-header-row">
-                      <td :colspan="6">
-                        <span class="outgoing-marker" />
-                        <span class="outgoing-label">传出的更改</span>
-                        <code v-if="outgoingBranch" class="outgoing-branch">{{ outgoingBranch }}</code>
-                      </td>
-                    </tr>
-                    <tr
-                      v-for="commit in commitStore.commits"
-                      :key="commit.id"
-                      class="commit-tr"
-                      :class="{ selected: commit.id === detail.sha }"
-                      @click="pick(commit.id)"
-                      @contextmenu.prevent="openMenu($event, commit.id)"
-                    >
-                      <!-- Git 提交网络图 -->
-                      <td class="cell-graph">
-                        <commit-graph
-                          :commit="commit"
-                          :row="commitStore.rowFor(commit.id)"
-                          :lanes="commitStore.graphLanes"
-                        />
-                      </td>
-                      <!-- 分支引用 -->
-                      <td v-if="prefs.refs" class="cell-refs">
-                        <div class="refs">
-                          <span v-if="commit.head && !commit.refs.some((b) => b.head)" class="badge current">HEAD</span>
-                          <span
-                            v-for="badge in commit.refs.slice(0, 4)"
-                            :key="`${badge.kind}:${badge.name}`"
-                            class="badge"
-                            :class="[badge.kind, { head: badge.head }]"
-                          >{{ badge.name }}</span>
-                          <span v-if="commit.refs.length > 4" class="badge more">+{{ commit.refs.length - 4 }}</span>
-                        </div>
-                      </td>
-                      <!-- 提交信息 -->
-                      <td class="cell-subject">
-                        <n-tag :type="typeColor(commit)" size="small" :bordered="false" class="type-tag">{{ typeLabel(commit) }}</n-tag>
-                        <n-tag v-if="commit.scope" size="small" :bordered="false">{{ commit.scope }}</n-tag>
-                        <n-tag v-if="commit.breaking" type="error" size="small" :bordered="false">!</n-tag>
-                        <n-tag v-if="commit.merge" type="warning" size="small" :bordered="false">merge</n-tag>
-                        <span class="subject" :title="commit.subject">{{ commit.subject }}</span>
-                      </td>
-                      <!-- 哈希 -->
-                      <td v-if="prefs.sha" class="cell-sha">
-                        <code>{{ commit.id.slice(0, 8) }}</code>
-                      </td>
-                      <!-- 提交人 -->
-                      <td v-if="prefs.author" class="cell-author">{{ commit.authorName }}</td>
-                      <!-- 提交时间 -->
-                      <td v-if="prefs.time" class="cell-time">
-                        {{ dayjs(commit.time * 1000).format("YYYY-MM-DD HH:mm") }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </n-table>
-              </n-scrollbar>
-            </template>
-
-            <!-- 状态行 -->
-            <n-space align="center" class="status-line">
-              <span class="muted">共 {{ commitStore.total }} 条</span>
-              <span v-if="commitStore.commits.length" class="muted">已读出 {{ commitStore.commits.length }} 条</span>
-              <span v-if="commitStore.graphLoading" class="muted">历史走向读取中…</span>
-              <span v-if="commitStore.truncated" class="scanned">只扫了历史的前一段，下面可能还有</span>
-              <template v-if="commitStore.error && hasRows">
-                <span class="muted">读取下一页失败：{{ commitStore.error.message }}</span>
-                <n-button size="small" @click="loadMore">重试</n-button>
-              </template>
-              <n-spin v-else-if="commitStore.loading" size="small" />
-              <span v-else-if="hasRows && commitStore.loadedAll" class="muted">已全部加载</span>
-            </n-space>
-          </div>
-        </template>
-
-        <template #2>
-          <div v-if="detail.sha" class="detail-pane">
-            <div class="detail-head">
-              <span class="detail-title">提交详情</span>
-              <n-button quaternary size="tiny" title="关闭" @click="detail.close()">✕</n-button>
+              <div v-else-if="!commitStore.graphError" class="graph-loading">
+                <n-spin size="small" />
+              </div>
             </div>
-            <n-scrollbar class="detail-scroll">
-              <commit-detail :repo-id="repoId" :commit="selectedCommit" />
-            </n-scrollbar>
+
+            <!-- 提交列表（右列） -->
+            <div class="list-column">
+              <!-- "传出的更改" 分节标题 -->
+              <div v-if="firstUnpushedIndex >= 0" class="outgoing-divider">
+                <span class="outgoing-marker" />
+                <span class="outgoing-label">传出的更改</span>
+                <code v-if="outgoingBranch" class="outgoing-branch">{{ outgoingBranch }}</code>
+              </div>
+
+              <div
+                v-for="commit in commitStore.commits"
+                :key="commit.id"
+                class="commit-row"
+                :class="{ selected: commit.id === detail.sha }"
+                @click="pick(commit.id)"
+                @contextmenu.prevent="openMenu($event, commit.id)"
+              >
+                <div class="row-main">
+                  <n-tag :type="typeColor(commit)" size="small" :bordered="false" class="type-tag">
+                    {{ typeLabel(commit) }}
+                  </n-tag>
+                  <n-tag v-if="commit.scope" size="small" :bordered="false">{{ commit.scope }}</n-tag>
+                  <n-tag v-if="commit.breaking" type="error" size="small" :bordered="false">!</n-tag>
+                  <n-tag v-if="commit.merge" type="warning" size="small" :bordered="false">merge</n-tag>
+                  <span class="subject" :title="commit.subject">{{ commit.subject }}</span>
+                </div>
+                <div class="row-meta">
+                  <div v-if="prefs.refs && commit.refs.length" class="refs">
+                    <span v-if="commit.head && !commit.refs.some((b) => b.head)" class="badge current">HEAD</span>
+                    <span
+                      v-for="badge in commit.refs.slice(0, 4)"
+                      :key="`${badge.kind}:${badge.name}`"
+                      class="badge"
+                      :class="[badge.kind, { head: badge.head }]"
+                    >{{ badge.name }}</span>
+                    <span v-if="commit.refs.length > 4" class="badge more">+{{ commit.refs.length - 4 }}</span>
+                  </div>
+                  <code v-if="prefs.sha" class="sha">{{ commit.id.slice(0, 8) }}</code>
+                  <span v-if="prefs.author" class="author">{{ commit.authorName }}</span>
+                  <span v-if="prefs.time" class="time">{{ dayjs(commit.time * 1000).format("MM-DD HH:mm") }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- 分隔条 -->
+        <div
+          v-if="showDetail"
+          class="divider"
+          :class="{ dragging: divider.dragging.value }"
+          @pointerdown="divider.onPointerDown"
+          @dblclick="divider.reset"
+        />
+
+        <!-- 提交详情面板 -->
+        <div
+          v-if="showDetail"
+          class="detail-pane"
+          :style="{ flexBasis: `${divider.size.value * 100}%` }"
+        >
+          <div class="detail-head">
+            <span class="detail-title">提交详情</span>
+            <n-button quaternary size="tiny" title="关闭" @click="detail.close()">✕</n-button>
           </div>
+          <div class="detail-scroll">
+            <commit-detail :repo-id="repoId" :commit="selectedCommit" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态行 -->
+      <n-space align="center" class="status-line">
+        <span class="muted">共 {{ commitStore.total }} 条</span>
+        <span v-if="commitStore.commits.length" class="muted">已读出 {{ commitStore.commits.length }} 条</span>
+        <span v-if="commitStore.graphLoading" class="muted">历史走向读取中…</span>
+        <span v-if="commitStore.truncated" class="scanned">只扫了历史的前一段，下面可能还有</span>
+        <template v-if="commitStore.error && hasRows">
+          <span class="muted">读取下一页失败：{{ commitStore.error.message }}</span>
+          <n-button size="small" @click="loadMore">重试</n-button>
         </template>
-      </n-split>
+        <n-spin v-else-if="commitStore.loading" size="small" />
+        <span v-else-if="hasRows && commitStore.loadedAll" class="muted">已全部加载</span>
+      </n-space>
 
       <n-dropdown
         trigger="manual"
@@ -460,39 +450,82 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
-.split {
+/* ---- 历史主体：滚动区 + 详情面板 ---- */
+.history-body {
   flex: 1;
   min-height: 0;
-}
-.split :deep(.n-split-pane) {
-  height: 100%;
+  display: flex;
   overflow: hidden;
 }
 
-.list-pane {
+/* ---- 唯一的滚动区：分支图与列表共享 ---- */
+.scroll-area {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  height: 100%;
+  gap: 0;
+}
+
+/* ---- 左列：分支图（sticky 让它在水平方向不动） ---- */
+.graph-column {
+  flex: none;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface-app);
+  border-right: 1px solid var(--border);
   min-width: 0;
 }
 
-.commit-scroll {
-  flex: 1;
-  min-height: 0;
-}
-
-.status-line {
+.graph-error {
+  margin: 8px;
   flex: none;
-  min-height: 24px;
 }
 
+.graph-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px 8px;
+}
+
+/* ---- 右列：提交列表 ---- */
+.list-column {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- 分隔条 ---- */
+.divider {
+  flex: none;
+  width: 3px;
+  cursor: col-resize;
+  background: var(--border);
+  position: relative;
+  transition: background 120ms ease;
+}
+
+.divider:hover,
+.divider.dragging {
+  background: var(--accent);
+}
+
+.divider::after {
+  content: "";
+  position: absolute;
+  display: block;
+  inset: 0 -6px;
+}
+
+/* ---- 详情面板 ---- */
 .detail-pane {
+  flex: none;
   display: flex;
   flex-direction: column;
-  height: 100%;
   overflow: hidden;
 }
+
 .detail-head {
   display: flex;
   align-items: center;
@@ -502,93 +535,53 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
-.detail-title { font-size: 12px; font-weight: 600; color: var(--text-2); }
+
+.detail-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
 .detail-scroll {
   flex: 1;
   min-height: 0;
+  overflow: auto;
 }
-.list-pane.full {
+
+/* ---- 提交行 ---- */
+.commit-row {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  height: 100%;
-  min-width: 0;
-}
-
-/* 提交表 */
-.commit-table {
-  font-size: 12px;
-  width: 100%;
-  table-layout: fixed;
-}
-
-/* 窄容器下保证列不被压扁：设一个下限宽度，超出部分横向滚动 */
-@media (max-width: 700px) {
-  .commit-table {
-    min-width: 600px;
-  }
-  .commit-scroll :deep(.n-scrollbar-container) {
-    overflow-x: auto;
-  }
-}
-
-.commit-table :deep(thead th) {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-3);
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 4px 8px;
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-.commit-table :deep(tbody tr) {
+  gap: 3px;
+  height: 44px;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--border-soft);
   cursor: pointer;
-  transition: background 120ms ease;
+  transition: background 100ms ease;
 }
 
-.commit-table :deep(tbody tr:hover) {
+.commit-row:hover {
   background: var(--surface-hover);
 }
 
-.commit-table :deep(tbody tr.selected) {
+.commit-row.selected {
   background: var(--surface-selected);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.commit-table :deep(td) {
-  padding: 0 8px;
-  border-bottom: none;
-  height: 30px;
-  vertical-align: middle;
-  box-shadow: inset 0 -1px 0 var(--border-soft);
+.row-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
 }
 
-.col-graph { width: 60px; padding: 0 !important; }
-.cell-graph { padding: 0 !important; vertical-align: middle; border-bottom: none !important; line-height: 0; }
-.commit-table :deep(td.cell-graph) { box-shadow: none !important; }
-
-
-.col-branch { width: 180px; }
-.cell-refs { white-space: nowrap; }
-
-.refs { display: flex; align-items: center; gap: 3px; max-width: 200px; overflow: hidden; }
-
-.badge {
-  flex: none; max-width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 15px;
+.type-tag {
+  flex: none;
+  min-width: 44px;
+  justify-content: center;
 }
-.badge.branch { color: var(--badge-branch-text); background: var(--badge-branch-bg); }
-.badge.remote { color: var(--badge-remote-text); background: var(--badge-remote-bg); }
-.badge.tag { color: var(--badge-tag-text); background: var(--badge-tag-bg); }
-.badge.current { color: var(--badge-head-text); background: var(--badge-head-bg); }
-.badge.head { font-weight: 600; box-shadow: inset 0 0 0 1px currentColor; }
-.badge.more { color: var(--badge-more-text); background: var(--badge-more-bg); }
 
-.cell-subject { padding: 0 8px; display: flex; align-items: center; gap: 4px; overflow: hidden; }
-.type-tag { flex: none; min-width: 44px; justify-content: center; }
 .subject {
   margin-left: 6px;
   flex: 1;
@@ -596,44 +589,145 @@ onBeforeUnmount(() => {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  font-size: 13px;
+  color: var(--text-1);
 }
 
-.col-sha { width: 80px; }
-.col-sha, .cell-sha { font-family: var(--font-mono); }
-.cell-sha code { font-size: 11px; color: var(--text-3); }
+.row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow: hidden;
+}
 
-.col-author { width: 100px; }
-.col-author, .cell-author { white-space: nowrap; }
-.cell-author { font-size: 11px; color: var(--text-2); }
+.refs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 200px;
+  overflow: hidden;
+}
 
-.col-time { width: 140px; }
-.col-time, .cell-time { white-space: nowrap; }
-.cell-time { font-size: 11px; color: var(--text-3); }
+.badge {
+  flex: none;
+  max-width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 10px;
+  line-height: 14px;
+}
 
-/* 传出的更改分节标题 */
-.outgoing-header-row td {
+.badge.branch { color: var(--badge-branch-text); background: var(--badge-branch-bg); }
+.badge.remote { color: var(--badge-remote-text); background: var(--badge-remote-bg); }
+.badge.tag { color: var(--badge-tag-text); background: var(--badge-tag-bg); }
+.badge.current { color: var(--badge-head-text); background: var(--badge-head-bg); }
+.badge.head { font-weight: 600; box-shadow: inset 0 0 0 1px currentColor; }
+.badge.more { color: var(--badge-more-text); background: var(--badge-more-bg); }
+
+.sha {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  flex: none;
+}
+
+.author {
+  flex: none;
+  white-space: nowrap;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.time {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* 传出的更改 */
+.outgoing-divider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 14px;
   background: var(--surface-hover);
   border-bottom: 1px solid var(--border);
   font-size: 12px;
-  padding: 0 10px;
-  height: 30px;
 }
+
 .outgoing-marker {
-  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--outgoing); margin-right: 6px; vertical-align: middle;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--outgoing);
 }
-.outgoing-label { font-weight: 600; color: var(--text-1); margin-right: 8px; }
+
+.outgoing-label {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
 .outgoing-branch {
-  padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 15px;
-  color: var(--badge-branch-text); background: var(--badge-branch-bg);
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--badge-branch-text);
+  background: var(--badge-branch-bg);
 }
 
-.graph-waiting {
-  display: flex; align-items: center; gap: 10px; height: 120px; padding: 0 16px;
+/* ---- 其他 ---- */
+.banner-error {
+  margin: 8px 14px;
+  flex: none;
 }
 
-.placeholder { padding-top: 20vh; }
-.muted { font-size: 12px; opacity: 0.7; }
-.scanned { color: var(--warn-text); opacity: 1; }
-.raw-output { margin: 8px 0 0; white-space: pre-wrap; font-size: 12px; opacity: 0.8; }
+.empty-state {
+  padding-top: 20vh;
+}
+
+.status-line {
+  flex: none;
+  min-height: 24px;
+}
+
+.placeholder {
+  padding-top: 20vh;
+}
+
+.muted {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.scanned {
+  color: var(--warn-text);
+  opacity: 1;
+}
+
+.raw-output {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* 窄容器：详情面板不再显示分隔条拖拽，改为占满一定比例 */
+@media (max-width: 700px) {
+  .scroll-area {
+    flex-direction: column;
+  }
+  .graph-column {
+    position: relative;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
 </style>

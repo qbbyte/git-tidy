@@ -48,7 +48,7 @@ export const tokens = {
   /**
    * 「传出的更改」：本地还没推出去的提交，在图列里统一用这一支紫。
    *
-   * 它只能有一个值、不能进分支调色板（`CommitRow.vue` 的 PALETTE）——那个调色板是按
+   * 它只能有一个值、不能进分支调色板（`CommitGraphPanel.vue` 的 BRANCH_COLORS）——那个调色板是按
    * 分支发号的，混进去就会被某条分支占用。选紫是因为它在 PALETTE 的 16 个槽位里
    * 没有同色：最接近的 hsl(288,…) 偏品红、hsl(243,…) 偏靛蓝，都隔得开。
    * 8b5cf6 在白底上约 4.6:1，2px 线站得住。
@@ -193,14 +193,14 @@ export const RADIUS_CARD = "6px";
 /**
  * 提交列表的行高。
  *
- * **虚拟列表的 `item-size` 必须与它逐像素一致**：Naive UI 的虚拟列表靠 item-size 算
- * 滚动条总高与每一行的偏移，两个值不一致时列表能滚、但行会重叠或留缝，而且不报错。
- * 所以它定义在这里，`CommitRow.vue` 的行高与 `CommitsView.vue` 的 item-size 都从这里取。
+ * **分支图面板的行间距必须与它逐像素一致**：`CommitGraphPanel.vue` 用它给每一条分支线
+ * 和圆点算垂直偏移，CSS 里的 `.commit-row` 高度也必须与之一致，否则线和点会对不上行。
+ * 所以它定义在这里，`CommitGraphPanel.vue` 和 `CommitsView.vue` 都从这里取。
  *
- * 30px 的由来：扫历史找一条提交是主场景，1366×768 下 30px 能看 22 行（44px 只有 13 行），
- * 再压下去图列的 S 形弯线和 12px 徽标就要开始挤了。
+ * 44px 的由来：重设计后每行有两层信息（主体 + 元数据），44px 让两层都呼吸得开，
+ * 分支线的 S 形弯转也有足够弧度。1366×768 下能看 ~14 行，够扫历史。
  */
-export const COMMIT_ROW_HEIGHT = 30;
+export const COMMIT_ROW_HEIGHT = 44;
 
 /**
  * 把 token 铺成 CSS 自定义属性。
