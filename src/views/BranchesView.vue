@@ -12,7 +12,6 @@ import {
   NCheckbox,
   NIcon,
   NInput,
-  NPopconfirm,
   NSpace,
   NTabPane,
   NTabs,
@@ -126,14 +125,39 @@ async function deleteBranch(name: string) {
   const probe = await writes.probeDeletable(name);
   if (probe === null) return;
   dialog.warning({
-    title: `删除分支 ${name}？`,
+    title: `确认删除分支 ${name}？`,
     content: probe.merged
-      ? "已合并进别的分支，删除不会丢提交。"
-      : `有 ${probe.unmerged ?? "?"} 个未合并的提交，删除会丢掉它们。`,
-    positiveText: "删除",
+      ? `分支 ${name} 已合并进别的分支，删除不会丢提交。`
+      : `分支 ${name} 有 ${probe.unmerged ?? "?"} 个未合并的提交，删除会丢掉它们。`,
+    positiveText: "确认删除",
     negativeText: "取消",
     onPositiveClick: async () => {
       await writes.deleteBranch(name, !probe.merged);
+      void fetchBranchDetails();
+    },
+  });
+}
+
+/** 批量删除选中的分支。逐条探测再统一确认 */
+async function batchDelete() {
+  const names = [...checkedKeys.value];
+  if (!names.length) return;
+  const probes = await Promise.all(names.map((n) => writes.probeDeletable(n)));
+  const valid = probes.filter((p): p is NonNullable<typeof p> => p !== null);
+  if (!valid.length) return;
+  const unmergedCount = valid.filter((p) => !p.merged).length;
+  dialog.warning({
+    title: `批量删除 ${valid.length} 个分支？`,
+    content: unmergedCount > 0
+      ? `其中 ${unmergedCount} 个有未合并提交，删除会丢掉那些提交。`
+      : `全部已合并，删除不会丢提交。`,
+    positiveText: "全部删除",
+    negativeText: "取消",
+    onPositiveClick: async () => {
+      for (const name of names) {
+        await writes.deleteBranch(name, true);
+      }
+      checkedKeys.value.clear();
       void fetchBranchDetails();
     },
   });
@@ -149,6 +173,20 @@ function formatTime(t: number): string {
 }
 
 const currentBranch = computed(() => repos.repoState?.branch ?? null);
+
+/** 双击分支行切换到该分支（与侧栏树的双击语义一致） */
+async function switchToBranch(name: string) {
+  if (name === currentBranch.value) return;
+  if (repos.workingFiles.length > 0) {
+    dialog.warning({
+      title: "工作区有改动",
+      content: `工作区还有 ${repos.workingFiles.length} 处改动，切换分支会被拒绝。`,
+      positiveText: "知道了",
+    });
+    return;
+  }
+  await writes.switchBranch(name, false);
+}
 </script>
 
 <template>
@@ -174,6 +212,9 @@ const currentBranch = computed(() => repos.repoState?.branch ?? null);
           </n-button>
           <n-button size="small" type="primary" @click="newBranchVisible = true">
             新建分支
+          </n-button>
+          <n-button size="small" type="error" ghost :disabled="!checkedKeys.size" @click="batchDelete">
+            删除选中 ({{ checkedKeys.size }})
           </n-button>
         </n-space>
         <n-input v-model:value="searchQuery" size="small" clearable placeholder="关键字" class="mgr-search" />
@@ -205,6 +246,7 @@ const currentBranch = computed(() => repos.repoState?.branch ?? null);
               class="mgr-row"
               :class="{ selected: selectedRow === branch.name, current: branch.name === currentBranch }"
               @click="selectedRow = branch.name"
+              @dblclick.stop="switchToBranch(branch.name)"
             >
               <td class="col-check" @click.stop>
                 <n-checkbox :checked="checkedKeys.has(branch.name)" @update:checked="(v: boolean) => toggleRow(branch.name, v)" />
@@ -224,14 +266,9 @@ const currentBranch = computed(() => repos.repoState?.branch ?? null);
               <td class="col-time">{{ formatTime(branch.time) }}</td>
               <td class="col-author">{{ branch.authorName || '—' }}</td>
               <td class="col-actions" @click.stop>
-                <n-popconfirm positive-text="删除" negative-text="取消" @positive-click="deleteBranch(branch.name)">
-                  <template #trigger>
-                    <n-button quaternary size="tiny" type="error" :disabled="branch.name === currentBranch">
-                      <template #icon><n-icon :component="TrashIcon" size="14" /></template>
-                    </n-button>
-                  </template>
-                  确认删除分支 {{ branch.name }}？
-                </n-popconfirm>
+                <n-button quaternary size="tiny" type="error" :disabled="branch.name === currentBranch" @click="deleteBranch(branch.name)">
+                  <template #icon><n-icon :component="TrashIcon" size="14" /></template>
+                </n-button>
               </td>
             </tr>
             <tr v-if="filteredBranches.length === 0">

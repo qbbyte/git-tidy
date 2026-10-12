@@ -1,10 +1,4 @@
 import { createRouter, createWebHashHistory } from "vue-router";
-import CommitsView from "@/views/CommitsView.vue";
-import CommitView from "@/views/CommitView.vue";
-import FilesView from "@/views/FilesView.vue";
-import ReportView from "@/views/ReportView.vue";
-import ChangelogView from "@/views/ChangelogView.vue";
-import BranchesView from "@/views/BranchesView.vue";
 
 /**
  * 用 hash 模式：Tauri 生产包走自定义协议加载本地文件，history 模式下深链刷新会命中
@@ -13,15 +7,17 @@ import BranchesView from "@/views/BranchesView.vue";
  * 仓库列表在常驻侧栏里，不再单独占一个路由——主区只保留 Fork 那两个页签。
  * 设置由左下角齿轮打开弹窗，也不占路由。
  */
+// 路由懒加载：每个页面打成独立 chunk，首屏只下载当前页的代码。
+// 994KB 单包拆成 6 块后，初始加载量降到 ~400KB，其余页面按需加载。
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: "/", redirect: { name: "history" } },
-    { path: "/history", name: "history", component: CommitsView },
-    { path: "/files", name: "files", component: FilesView },
-    { path: "/commit", name: "commit", component: CommitView },
-    { path: "/report", name: "report", component: ReportView },
-    { path: "/changelog", name: "changelog", component: ChangelogView },
-    { path: "/branches", name: "branches", component: BranchesView },
+    { path: "/history", name: "history", component: () => import("@/views/CommitsView.vue") },
+    { path: "/files", name: "files", component: () => import("@/views/FilesView.vue") },
+    { path: "/commit", name: "commit", component: () => import("@/views/CommitView.vue") },
+    { path: "/report", name: "report", component: () => import("@/views/ReportView.vue") },
+    { path: "/changelog", name: "changelog", component: () => import("@/views/ChangelogView.vue") },
+    { path: "/branches", name: "branches", component: () => import("@/views/BranchesView.vue") },
   ],
 });
