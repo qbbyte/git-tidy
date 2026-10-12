@@ -13,21 +13,47 @@ const props = defineProps<{
   rows: GraphRow[];
   lanes: number;
   selectedSha?: string | null;
+   /** 未推送的提交集合——它们整行改用 --outgoing 色，推送状态比分支身份更该被一眼看见 */
+   unpushedShas?: Set<string>;
+   /** 合并提交集合——画成空心圆环而非实心点 */
+   mergeShas?: Set<string>;
 }>();
 
 const ROW_H = COMMIT_ROW_HEIGHT;
-const LANE_W = 22;
-const DOT_R = 5;
+const LANE_W = 26;
+const DOT_R = 5.5;
+const MERGE_R = 4.5;
 const STROKE_W = 2;
-const PAD_LEFT = 10;
+const PAD_LEFT = 12;
+
+/** 未推送提交的线条色——从 CSS 变量取，与全局主题一致 */
+const OUTGOING_COLOR = "var(--outgoing)";
 
 const BRANCH_COLORS = [
-  "#3b82f6", "#22c55e", "#eab308", "#ef4444",
-  "#8b5cf6", "#06b6d4", "#f97316", "#ec4899",
+  "#3b82f6", // 蓝——主线（HEAD 沿第一父的那条链）
+  "#22c55e", // 绿
+  "#eab308", // 黄
+  "#ef4444", // 红
+  "#8b5cf6", // 紫
+  "#06b6d4", // 青
+  "#f97316", // 橙
+  "#ec4899", // 粉
 ];
 
-function colorOf(c: number) {
+function branchColor(c: number) {
   return BRANCH_COLORS[c % BRANCH_COLORS.length];
+}
+
+/** 未推送的行整行用 outgoing 色；其余按分支色号取 */
+function strokeColor(c: number, sha: string) {
+  if (props.unpushedShas?.has(sha)) return OUTGOING_COLOR;
+  return branchColor(c);
+}
+
+/** 节点颜色同理 */
+function dotColor(c: number, sha: string) {
+  if (props.unpushedShas?.has(sha)) return OUTGOING_COLOR;
+  return branchColor(c);
 }
 
 const graphWidth = computed(() =>
@@ -54,19 +80,24 @@ const renderPaths = computed<RenderPath[]>(() => {
 
     if (row.incoming && !row.segments.some((s) => s.to === row.lane)) {
       const x = centerX(row.lane);
-      result.push({ d: `M ${x} ${yT} L ${x} ${yM}`, color: colorOf(row.color), key: `${row.sha}-stub` });
+      result.push({ d: `M ${x} ${yT} L ${x} ${yM}`, color: strokeColor(row.color, row.sha), key: `${row.sha}-stub` });
     }
 
     for (const seg of row.segments) {
       const fx = centerX(seg.from);
       const tx = centerX(seg.to);
-      const col = colorOf(seg.color);
+      const col = strokeColor(seg.color, row.sha);
       if (seg.dangling) {
         const endY = yB - ROW_H * 0.18;
         const gap = ROW_H * 0.18;
         result.push({
           d: `M ${fx} ${yM} C ${fx} ${yM + gap}, ${tx} ${endY - gap * 0.75}, ${tx} ${endY}`,
           color: col, key: `${row.sha}-d-${seg.from}-${seg.to}`,
+        });
+        // 截断端帽：小横杠表示"到此为止"
+        result.push({
+          d: `M ${tx - 3} ${endY} L ${tx + 3} ${endY}`,
+          color: col, key: `${row.sha}-dc-${seg.from}-${seg.to}`,
         });
         continue;
       }
@@ -84,16 +115,17 @@ const renderPaths = computed<RenderPath[]>(() => {
   return result;
 });
 
-interface RenderDot { cx: number; cy: number; r: number; color: string; key: string; selected: boolean }
+interface RenderDot { cx: number; cy: number; r: number; color: string; key: string; selected: boolean; isMerge: boolean }
 
 const renderDots = computed<RenderDot[]>(() =>
   props.rows.map((row, ri) => ({
     cx: centerX(row.lane),
     cy: ri * ROW_H + ROW_H / 2,
-    r: DOT_R,
-    color: colorOf(row.color),
+    r: props.mergeShas?.has(row.sha) ? MERGE_R : DOT_R,
+    color: dotColor(row.color, row.sha),
     key: `${row.sha}-dot`,
     selected: row.sha === props.selectedSha,
+   isMerge: props.mergeShas?.has(row.sha) ?? false,
   })),
 );
 
@@ -124,9 +156,9 @@ defineExpose({ graphWidth });
       :cx="dot.cx"
       :cy="dot.cy"
       :r="dot.selected ? dot.r + 2 : dot.r"
-      :fill="dot.color"
-      :stroke="dot.selected ? '#fff' : 'none'"
-      :stroke-width="dot.selected ? 2 : 0"
+      :fill="dot.isMerge ? 'var(--surface-app)' : dot.color"
+      :stroke="dot.isMerge ? dot.color : (dot.selected ? '#fff' : 'none')"
+      :stroke-width="dot.isMerge ? 2 : (dot.selected ? 2 : 0)"
     />
   </svg>
 </template>

@@ -253,6 +253,16 @@ const graphRows = computed<GraphRow[]>(() => {
   return result;
 });
 
+/** 未推送提交的 sha 集合——传给分支图面板整行改色 */
+const unpushedShas = computed(
+  () => new Set(commitStore.commits.filter((c) => c.unpushed).map((c) => c.id)),
+);
+
+/** 合并提交的 sha 集合——传给分支图面板画成空心圆环 */
+const mergeShas = computed(
+  () => new Set(commitStore.commits.filter((c) => c.merge).map((c) => c.id)),
+);
+
 onMounted(async () => {
   if (repos.repos.length === 0) await repos.load();
   detail.close();
@@ -337,6 +347,8 @@ onBeforeUnmount(() => {
                 :rows="graphRows"
                 :lanes="commitStore.graphLanes"
                 :selected-sha="detail.sha"
+                :unpushed-shas="unpushedShas"
+                :merge-shas="mergeShas"
               />
               <div v-else-if="!commitStore.graphError" class="graph-loading">
                 <n-spin size="small" />
