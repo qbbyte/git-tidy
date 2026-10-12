@@ -149,7 +149,7 @@ function clear() {
 </script>
 
 <template>
-  <div class="bar">
+  <div class="bar" role="search" aria-label="提交历史筛选">
     <n-space align="center" size="small" :wrap="false">
       <n-select
         v-model:value="rev"

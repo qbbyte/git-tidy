@@ -1,6 +1,6 @@
 import { ref } from "vue";
 import { defineStore } from "pinia";
-import { GitTidyError } from "@/api/client";
+import { GitTidyError, wrapError } from "@/api/client";
 import {
   prefsGet,
   prefsPath,
@@ -21,10 +21,6 @@ export const usePrefsStore = defineStore("prefs", () => {
   const loading = ref(false);
   const error = ref<GitTidyError | null>(null);
 
-  function wrap(err: unknown) {
-    return err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
-  }
-
   async function load() {
     loading.value = true;
     error.value = null;
@@ -33,7 +29,7 @@ export const usePrefsStore = defineStore("prefs", () => {
       prefs.value = loaded;
       path.value = file;
     } catch (err) {
-      error.value = wrap(err);
+      error.value = wrapError(err);
     } finally {
       loading.value = false;
     }
@@ -62,7 +58,7 @@ export const usePrefsStore = defineStore("prefs", () => {
       try {
         prefs.value = await prefsUpdate({ ...current, ...change(current) });
       } catch (err) {
-        error.value = wrap(err);
+        error.value = wrapError(err);
       }
     });
     // 出错也往下走：`task` 自己把异常吞成了 `error`，链不能因此断掉
@@ -75,7 +71,7 @@ export const usePrefsStore = defineStore("prefs", () => {
     try {
       prefs.value = await prefsReset();
     } catch (err) {
-      error.value = wrap(err);
+      error.value = wrapError(err);
     }
   }
 

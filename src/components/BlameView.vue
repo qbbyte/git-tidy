@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { shortSha } from "@/format";
 import { computed } from "vue";
 import dayjs from "dayjs";
 import { NAlert, NButton, NEmpty, NSpin } from "naive-ui";
@@ -80,7 +81,7 @@ const blocks = computed<Block[]>(() => {
         <div v-for="block in blocks" :key="`${block.sha}-${block.lines[0].line}`" class="block">
           <div class="owner">
             <code v-if="!block.boundary" class="sha" @click="emit('pick', block.sha)">
-              {{ block.sha.slice(0, 8) }}
+              {{ shortSha(block.sha) }}
             </code>
             <code v-else class="sha boundary" title="边界提交：归属早于本仓库的历史">（边界）</code>
             <span class="who">{{ block.author }}</span>

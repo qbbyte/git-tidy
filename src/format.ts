@@ -11,3 +11,8 @@ export function formatDelta(oldSize: number | null, newSize: number | null): str
   if (oldSize === null && newSize === null) return "";
   return `${formatBytes(oldSize)} → ${formatBytes(newSize)}`;
 }
+
+/** 提交号在界面里只给前 8 位：两个 40 位并排排出来没人读得下去 */
+export function shortSha(sha: string | null): string {
+  return sha === null ? "" : sha.slice(0, 8);
+}

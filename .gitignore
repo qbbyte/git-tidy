@@ -26,3 +26,6 @@ dist-ssr
 # 本地工具目录：workbuddy 的记忆跟着这台机器走，不进仓库
 # （不写这一条的话，它会以"未跟踪"常年挂在提交页的「变更」列里）
 .workbuddy/
+
+# Rust 编译产物
+src-tauri/target/

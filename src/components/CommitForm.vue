@@ -232,7 +232,9 @@ const aiShrinkHint = computed(() => {
 const aiConfig = computed(() => prefsStore.prefs?.ai);
 const aiEnabled = computed(() => {
   const ai = aiConfig.value;
-  return !!ai && !!ai.endpoint.trim() && !!ai.apiKey.trim() && !!ai.model.trim();
+  // API key 不再随 prefs_get 返回，这里只检查 endpoint + model；
+  // key 缺失时由 requestCommitMessage 在发请求前报错
+  return !!ai && !!ai.endpoint.trim() && !!ai.model.trim();
 });
 /** 草稿里已经有东西时，弹窗要点破"会覆盖"，别让人以为在追加 */
 const aiWillOverwrite = computed(() => !!description.value.trim() || !!body.value.trim());

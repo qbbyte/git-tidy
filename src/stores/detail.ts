@@ -1,6 +1,6 @@
 import { ref, shallowRef } from "vue";
 import { defineStore } from "pinia";
-import { GitTidyError } from "@/api/client";
+import { GitTidyError, wrapError } from "@/api/client";
 import { showCommit } from "@/api/commit";
 import {
   fetchDetail,
@@ -11,9 +11,6 @@ import {
 } from "@/api/detail";
 import type { Commit } from "@/api/commit";
 
-function wrap(err: unknown): GitTidyError {
-  return err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
-}
 
 /**
  * 「历史」页右半边的状态：选中提交的改动清单，加上其中一个文件的差异。
@@ -78,7 +75,7 @@ export const useDetailStore = defineStore("detail", () => {
       detail.value = got;
     } catch (err) {
       if (mine !== detailSeq) return;
-      error.value = wrap(err);
+      error.value = wrapError(err);
     } finally {
       if (mine === detailSeq) loading.value = false;
     }
@@ -93,7 +90,7 @@ export const useDetailStore = defineStore("detail", () => {
       row.value = got;
     } catch (err) {
       if (mine !== rowSeq) return;
-      rowError.value = wrap(err);
+      rowError.value = wrapError(err);
     } finally {
       if (mine === rowSeq) rowLoading.value = false;
     }
@@ -117,7 +114,7 @@ export const useDetailStore = defineStore("detail", () => {
       diff.value = got;
     } catch (err) {
       if (mine !== diffSeq) return;
-      diffError.value = wrap(err);
+      diffError.value = wrapError(err);
     } finally {
       if (mine === diffSeq) diffLoading.value = false;
     }

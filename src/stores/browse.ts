@@ -1,6 +1,6 @@
 import { ref, shallowRef } from "vue";
 import { defineStore } from "pinia";
-import { GitTidyError } from "@/api/client";
+import { GitTidyError, wrapError } from "@/api/client";
 import {
   fileBlame,
   fileContent,
@@ -11,10 +11,6 @@ import {
   type TreeEntry,
 } from "@/api/file";
 import type { Commit } from "@/api/commit";
-
-function wrap(err: unknown): GitTidyError {
-  return err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
-}
 
 /** 历史最多列多少条文件改动。再多就翻页，这一版先只给一页 */
 const HISTORY_LIMIT = 200;
@@ -64,7 +60,7 @@ export const useBrowseStore = defineStore("browse", () => {
       if (path.value !== null && !got.some((item) => item.path === path.value)) closeFile();
     } catch (err) {
       if (mine !== treeSeq) return;
-      treeError.value = wrap(err);
+      treeError.value = wrapError(err);
     } finally {
       if (mine === treeSeq) treeLoading.value = false;
     }
@@ -113,7 +109,7 @@ export const useBrowseStore = defineStore("browse", () => {
         if (mineContent === contentSeq) content.value = got;
       })
       .catch((err: unknown) => {
-        if (mineContent === contentSeq) contentError.value = wrap(err);
+        if (mineContent === contentSeq) contentError.value = wrapError(err);
       })
       .finally(() => {
         if (mineContent === contentSeq) contentLoading.value = false;
@@ -124,7 +120,7 @@ export const useBrowseStore = defineStore("browse", () => {
         if (mineBlame === blameSeq) blame.value = got;
       })
       .catch((err: unknown) => {
-        if (mineBlame === blameSeq) blameError.value = wrap(err);
+        if (mineBlame === blameSeq) blameError.value = wrapError(err);
       })
       .finally(() => {
         if (mineBlame === blameSeq) blameLoading.value = false;
@@ -135,7 +131,7 @@ export const useBrowseStore = defineStore("browse", () => {
         if (mineHistory === historySeq) history.value = page.commits;
       })
       .catch((err: unknown) => {
-        if (mineHistory === historySeq) historyError.value = wrap(err);
+        if (mineHistory === historySeq) historyError.value = wrapError(err);
       })
       .finally(() => {
         if (mineHistory === historySeq) historyLoading.value = false;

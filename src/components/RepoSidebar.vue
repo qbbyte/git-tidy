@@ -14,6 +14,7 @@ import {
   type DropdownOption,
   type TreeOption,
   useDialog,
+  useMessage,
 } from "naive-ui";
 import Settings from "@vicons/tabler/es/Settings";
 import FolderIcon from "@vicons/tabler/es/Folder";
@@ -35,6 +36,7 @@ import type { Ref as GitRef } from "@/api/refs";
 const repos = useReposStore();
 const writes = useWriteStore();
 const dialog = useDialog();
+const message = useMessage();
 
 const emit = defineEmits<{
   (e: "open-settings"): void;
@@ -202,20 +204,21 @@ function treeNodeProps({ option }: { option: TreeOption }) {
 async function confirmSwitch(gitRef: GitRef) {
   const currentBranch = repos.repoState?.branch ?? null;
   if (gitRef.name === currentBranch) return;
-  if (repos.workingFiles.length > 0) {
-    dialog.warning({
-      title: "工作区有改动",
-      content: `工作区还有 ${repos.workingFiles.length} 处改动，切换分支会被拒绝。`,
-      positiveText: "知道了",
-    });
-    return;
-  }
+  const dirty = repos.workingFiles.length;
+  const doSwitch = async () => {
+    const outcome = await writes.switchBranch(gitRef.name, false);
+    if (outcome) message.success(`已切换到分支 ${gitRef.name}`);
+    else if (writes.error) message.error(writes.error.message);
+  };
   dialog.warning({
     title: "切换分支",
-    content: `切换到分支 ${gitRef.name}？`,
+    content:
+      dirty > 0
+        ? `工作区还有 ${dirty} 处改动。若与目标分支冲突将被拒绝，不冲突的改动会带到目标分支上。仍要切换到 ${gitRef.name}？`
+        : `切换到分支 ${gitRef.name}？`,
     positiveText: "切换",
     negativeText: "取消",
-    onPositiveClick: () => void writes.switchBranch(gitRef.name, false),
+    onPositiveClick: () => void doSwitch(),
   });
 }
 
@@ -284,11 +287,23 @@ async function onBranchMenuSelect(key: string) {
   closeBranchMenu();
   if (!target) return;
   if (key === "switch") {
-    if (repos.workingFiles.length > 0) {
-      dialog.warning({ title: "工作区有改动", content: `工作区还有 ${repos.workingFiles.length} 处改动，切换分支会被拒绝。`, positiveText: "知道了" });
+    const doSwitch = async () => {
+      const outcome = await writes.switchBranch(target.name, false);
+      if (outcome) message.success(`已切换到分支 ${target.name}`);
+      else if (writes.error) message.error(writes.error.message);
+    };
+    const dirty = repos.workingFiles.length;
+    if (dirty > 0) {
+      dialog.warning({
+        title: "工作区有改动",
+        content: `工作区还有 ${dirty} 处改动。若与目标分支冲突将被拒绝，不冲突的改动会带到目标分支上。仍要切换吗？`,
+        positiveText: "切换",
+        negativeText: "取消",
+        onPositiveClick: () => void doSwitch(),
+      });
       return;
     }
-    await writes.switchBranch(target.name, false);
+    await doSwitch();
     return;
   }
   if (key === "rename") {
@@ -334,7 +349,7 @@ function toggleExpandAll() {
 </script>
 
 <template>
-  <aside class="side">
+  <aside class="side" role="navigation" aria-label="仓库列表">
     <!-- 搜索 -->
     <div v-if="repos.repos.length > SEARCH_THRESHOLD" class="search-wrap">
       <n-input
@@ -367,8 +382,8 @@ function toggleExpandAll() {
             @keyup.enter="saveRename"
             @click.stop
           />
-          <n-button size="tiny" type="primary" @click.stop="saveRename">✓</n-button>
-          <n-button size="tiny" quaternary @click.stop="editing = null">✕</n-button>
+          <n-button size="tiny" type="primary" aria-label="保存名称" @click.stop="saveRename">✓</n-button>
+          <n-button size="tiny" quaternary aria-label="取消重命名" @click.stop="editing = null">✕</n-button>
         </template>
         <template v-else>
           <n-icon :component="FolderIcon" size="16" class="repo-icon" :class="repo.kind" />

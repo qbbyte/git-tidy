@@ -9,6 +9,7 @@ import {
   type AiConfig,
   type GeneratedCommit,
 } from "@/lib/ai";
+import { aiApiKeyGet } from "@/api/prefs";
 
 export type { AiConfig, GeneratedCommit } from "@/lib/ai";
 
@@ -39,6 +40,10 @@ export async function requestCommitMessage(
   const invalid = validateConfig(config);
   if (invalid) throw new Error(invalid);
 
+  // API key 不在通用偏好里，单独从 Rust 侧取——减少 key 在 IPC / 日志中的暴露面。
+  const apiKey = (await aiApiKeyGet()).trim();
+  if (!apiKey) throw new Error("AI 未配置：请先在设置里填写 API Key");
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -49,7 +54,7 @@ export async function requestCommitMessage(
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey.trim()}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: config.model.trim(),
@@ -62,14 +67,14 @@ export async function requestCommitMessage(
       throw new Error(`AI 请求超时（${REQUEST_TIMEOUT_MS / 1000} 秒未返回）`);
     }
     const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`调用 AI 失败：${redactKey(reason, config)}`);
+    throw new Error(`调用 AI 失败：${redactKey(reason, { ...config, apiKey })}`);
   } finally {
     clearTimeout(timer);
   }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(`AI 返回 ${response.status}：${redactKey(detail, config).slice(0, 200)}`);
+    throw new Error(`AI 返回 ${response.status}：${redactKey(detail, { ...config, apiKey }).slice(0, 200)}`);
   }
 
   const data = (await response.json().catch(() => null)) as {

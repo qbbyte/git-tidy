@@ -1,6 +1,6 @@
 import { ref, shallowRef } from "vue";
 import { defineStore } from "pinia";
-import { GitTidyError } from "@/api/client";
+import { GitTidyError, wrapError } from "@/api/client";
 import type { Diff } from "@/api/detail";
 import type { FileContent } from "@/api/file";
 import { worktreeFileContent } from "@/api/file";
@@ -82,10 +82,6 @@ export const usePreviewStore = defineStore("preview", () => {
   /** 上一次取数用的文件对象。重试与切换空白开关要拿它重发 */
   let last: WorkingFile | null = null;
 
-  function wrap(err: unknown): GitTidyError {
-    return err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
-  }
-
   function statusPair(file: WorkingFile): string {
     return `${file.indexStatus}${file.worktreeStatus}`;
   }
@@ -108,7 +104,7 @@ export const usePreviewStore = defineStore("preview", () => {
       diff.value = got;
     } catch (err) {
       if (mine !== seq) return;
-      error.value = wrap(err);
+      error.value = wrapError(err);
     } finally {
       if (mine === seq) loading.value = false;
     }

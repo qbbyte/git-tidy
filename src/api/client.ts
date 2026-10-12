@@ -40,3 +40,13 @@ function normalize(raw: unknown): GitTidyError {
   }
   return new GitTidyError("ipc_unknown", String(raw));
 }
+
+/**
+ * 把任意 caught 值归一成 GitTidyError。
+ *
+ * 多个 store 都要在 catch 块里做同一件事：拿到的可能已经是 GitTidyError（IPC 层抛的），
+ * 也可能是未预期的值。统一在这里收口，不在每个 store 各写一遍。
+ */
+export function wrapError(err: unknown): GitTidyError {
+  return err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
+}

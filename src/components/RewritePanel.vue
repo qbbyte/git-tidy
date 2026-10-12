@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { shortSha } from "@/format";
 import { computed, ref } from "vue";
 import { NButton, NEmpty, NInput, NSelect, useDialog, useMessage } from "naive-ui";
 import { useWriteStore } from "@/stores/write";
@@ -131,7 +132,7 @@ function confirmExecute() {
       <div v-if="todo.length" class="list">
         <div v-for="(item, index) in todo" :key="item.sha" class="row" :class="item.action">
           <div class="row-main">
-            <code class="sha">{{ item.sha.slice(0, 8) }}</code>
+            <code class="sha">{{ shortSha(item.sha) }}</code>
             <span class="subject" :title="subjectOf(item.sha)">{{ subjectOf(item.sha) }}</span>
             <span class="muted author">{{ authorOf(item.sha) }}</span>
           </div>

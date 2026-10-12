@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { shortSha } from "@/format";
 import dayjs from "dayjs";
 import { ref } from "vue";
 import { NButton, NEmpty, NPopconfirm, NTag } from "naive-ui";
@@ -67,9 +68,6 @@ function label(action: string) {
  */
 const collapsed = ref(false);
 
-function short(sha: string | null) {
-  return sha === null ? "" : sha.slice(0, 8);
-}
 </script>
 
 <template>
@@ -109,7 +107,7 @@ function short(sha: string | null) {
         <span class="when muted">{{ dayjs(entry.ts * 1000).format("MM-DD HH:mm:ss") }}</span>
         <div class="detail muted">
           <span v-if="entry.headBefore">
-            {{ short(entry.headBefore) }} → {{ short(entry.headAfter) }}
+            {{ shortSha(entry.headBefore) }} → {{ shortSha(entry.headAfter) }}
           </span>
           <code class="ref" :title="'用 git update-ref refs/heads/<分支> ' + entry.backupRef + ' 可以回到这一步之前'">
             {{ entry.backupRef }}

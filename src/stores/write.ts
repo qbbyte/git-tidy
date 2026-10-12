@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { computed, ref, shallowRef } from "vue";
 import { defineStore } from "pinia";
-import { GitTidyError } from "@/api/client";
+import { GitTidyError, wrapError } from "@/api/client";
 import {
   abortOperation,
   branchCreate,
@@ -52,14 +52,7 @@ import {
 import { useReposStore } from "@/stores/repos";
 import { usePrefsStore } from "@/stores/prefs";
 
-function wrap(err: unknown): GitTidyError {
-  return err instanceof GitTidyError ? err : new GitTidyError("unknown", String(err));
-}
-
-/** 提交号在界面文案里只给前 8 位：两串 40 位并排没人读得下去 */
-function shortSha(sha: string): string {
-  return sha.slice(0, 8);
-}
+import { shortSha } from "@/format";
 
 /**
  * 写操作的状态层（M2）。
@@ -123,7 +116,7 @@ export const useWriteStore = defineStore("write", () => {
       await refreshAfterWrite();
       return done;
     } catch (err) {
-      error.value = wrap(err);
+      error.value = wrapError(err);
       return null;
     } finally {
       busy.value = false;
@@ -269,7 +262,7 @@ export const useWriteStore = defineStore("write", () => {
       deletable.value = { ...deletable.value, [name]: probe };
       return probe;
     } catch (err) {
-      error.value = wrap(err);
+      error.value = wrapError(err);
       return null;
     }
   }
@@ -397,7 +390,7 @@ export const useWriteStore = defineStore("write", () => {
     try {
       return await remoteFetch(id, remote);
     } catch (err) {
-      error.value = wrap(err);
+      error.value = wrapError(err);
       return null;
     } finally {
       syncAction.value = null;
@@ -434,7 +427,7 @@ export const useWriteStore = defineStore("write", () => {
       await repos.refreshRefs();
       return report;
     } catch (err) {
-      error.value = wrap(err);
+      error.value = wrapError(err);
       return null;
     }
   }
@@ -448,7 +441,7 @@ export const useWriteStore = defineStore("write", () => {
       await repos.refreshRefs();
       return report;
     } catch (err) {
-      error.value = wrap(err);
+      error.value = wrapError(err);
       return null;
     }
   }
@@ -495,7 +488,7 @@ export const useWriteStore = defineStore("write", () => {
       rewriteReport.value = null;
       return entries;
     } catch (err) {
-      error.value = wrap(err);
+      error.value = wrapError(err);
       return null;
     }
   }
