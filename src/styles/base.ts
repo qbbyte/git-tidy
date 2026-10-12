@@ -42,6 +42,8 @@ html, body {
 html, body, #app {
   height: 100%;
   margin: 0;
+  background: var(--surface-app);
+  color: var(--text-1);
 }
 
 /* 滚动条：Windows 默认那根 17px 的宽条在密集列表里占掉一行宽度，

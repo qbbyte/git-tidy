@@ -18,6 +18,8 @@ use crate::error::GitError;
 pub struct Preferences {
     /// 拉取策略。快进优先是这里的默认：合不进去就停住让人决定（需求 6.14）
     pub pull_strategy: PullStrategy,
+    /// 主题模式：跟随系统 / 月之亮面 / 月之暗面
+    pub theme: ThemeMode,
     /// Git Flow 的命名前缀（需求 7.16）：可改，不用就改空串
     pub flow_prefixes: FlowPrefixes,
     /// 启动时检查一次更新（需求 7.24）。关掉就完全不联网问版本
@@ -25,20 +27,21 @@ pub struct Preferences {
     /// 提交列表显示哪些列。默认全开——省的是眼睛，不是数据
     pub columns: Columns,
     pub window: WindowState,
-    /// AI 生成提交信息的接入配置（§AI）。空 = 未启用。
-    /// api_key 明文落在本地 preferences.json 里，这是本地桌面应用的取舍：
-    /// 走前端直接调 LLM（参见前端 api/ai.ts），不引入 Rust 网络依赖。
+    /// AI 生成提交信息的接入配置（§AI）。`api_key` 不落在 preferences.json，
+    /// 由单独的 `ai_api_key_get` / `ai_api_key_set` 命令管理，存在独立的 `.ai_key` 文件里。
     pub ai: AiConfig,
 }
 
 /// AI 接入配置。`endpoint` 是 OpenAI 兼容的 `/chat/completions` 基址
 /// （可接 OpenAI / DeepSeek / 通义 / 本地 Ollama 等），`model` 是该服务上的模型名。
 ///
-/// 三个字段默认全空 = 未启用：没填完的半套配置不该被当成可用状态。
+/// `api_key` 用 `#[serde(skip_serializing)]`：旧版 preferences.json 里如果带了明文 key，
+/// 反序列化时能读到（做迁移），但之后写盘不会再落出去。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiConfig {
     pub endpoint: String,
+    #[serde(skip_serializing)]
     pub api_key: String,
     pub model: String,
 }
@@ -116,6 +119,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             pull_strategy: PullStrategy::default(),
+            theme: ThemeMode::default(),
             flow_prefixes: FlowPrefixes::default(),
             auto_update: true,
             columns: Columns::default(),
@@ -150,14 +154,21 @@ impl Prefs {
     /// 而坏掉的那份内容留在原处，用户还能自己去修。
     pub fn load(dir: &Path) -> Self {
         let path = dir.join("preferences.json");
-        let current = std::fs::read_to_string(&path)
+        let mut current = std::fs::read_to_string(&path)
             .ok()
             .and_then(|raw| serde_json::from_str::<Preferences>(&raw).ok())
             .unwrap_or_default();
-        Self {
+        let prefs = Self {
             path,
-            current: RwLock::new(current),
+            current: RwLock::new(current.clone()),
+        };
+        // 迁移：旧版 preferences.json 里可能带了明文 api_key，把它搬到独立文件
+        if !current.ai.api_key.is_empty() {
+            let _ = prefs.set_api_key(&current.ai.api_key);
+            current.ai.api_key.clear();
+            let _ = prefs.replace(current);
         }
+        prefs
     }
 
     pub fn get(&self) -> Preferences {
@@ -167,19 +178,61 @@ impl Prefs {
             .unwrap_or_default()
     }
 
+    /// 读 API key。不在 preferences.json 里，单独存在 `.ai_key` 文件。
+    /// 读坏了（权限问题等）返回错误，而非空串——与 CHANGELOG 的同一条原则。
+    pub fn get_api_key(&self) -> Result<String, GitError> {
+        match std::fs::read_to_string(self.key_path()) {
+            Ok(s) => Ok(s.trim().to_string()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(err) => Err(GitError::Internal(format!("无法读取 API Key：{err}"))),
+        }
+    }
+
+    /// 写 API key 到独立的 `.ai_key` 文件。用同目录临时文件 + rename 保证原子性。
+    pub fn set_api_key(&self, key: &str) -> Result<(), GitError> {
+        let key_path = self.key_path();
+        let temp = key_path.with_extension("ai_key.tmp");
+        std::fs::write(&temp, key.trim())
+            .map_err(|err| GitError::Internal(format!("无法写入 API Key：{err}")))?;
+        std::fs::rename(&temp, &key_path)
+            .map_err(|err| GitError::Internal(format!("无法保存 API Key：{err}")))?;
+        // Unix: 限制为当前用户可读写
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    }
+
+    /// 清除 API key。
+    pub fn clear_api_key(&self) -> Result<(), GitError> {
+        match std::fs::remove_file(self.key_path()) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(GitError::Internal(format!("无法清除 API Key：{err}"))),
+        }
+    }
+
+    fn key_path(&self) -> PathBuf {
+        self.path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(".ai_key")
+    }
+
     /// 整份替换（前端每次都交完整对象，省掉一层"哪些字段变了"的推断）。
     pub fn replace(&self, next: Preferences) -> Result<Preferences, GitError> {
         let next = next.clamped();
         if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(|err| GitError::Internal(err.to_string()))?;
+            std::fs::create_dir_all(dir).map_err(GitError::internal)?;
         }
-        let body = serde_json::to_string_pretty(&next)
-            .map_err(|err| GitError::Internal(err.to_string()))?;
+        let body = serde_json::to_string_pretty(&next).map_err(GitError::internal)?;
         // 同目录临时文件 + rename：写到一半断电不会留下半个 JSON，
         // 而这个文件是应用启动就要读的
         let temp = self.path.with_extension("json.tmp");
-        std::fs::write(&temp, body).map_err(|err| GitError::Internal(err.to_string()))?;
-        std::fs::rename(&temp, &self.path).map_err(|err| GitError::Internal(err.to_string()))?;
+        std::fs::write(&temp, body).map_err(GitError::internal)?;
+        std::fs::rename(&temp, &self.path).map_err(GitError::internal)?;
         if let Ok(mut guard) = self.current.write() {
             *guard = next.clone();
         }
@@ -239,14 +292,19 @@ mod tests {
         let mut next = first.get();
         next.ai = AiConfig {
             endpoint: "https://api.example.com/v1".into(),
-            api_key: "sk-test".into(),
+            api_key: String::new(),
             model: "gpt-4o-mini".into(),
         };
         first.replace(next).expect("write");
+        // api_key 通过独立 .ai_key 文件持久化（不再写入 preferences.json）
+        first.set_api_key("sk-test").expect("write key");
 
         let second = Prefs::load(dir.path());
         assert_eq!(second.get().ai.endpoint, "https://api.example.com/v1");
-        assert_eq!(second.get().ai.api_key, "sk-test");
+        // preferences.json 里的 api_key 字段已分离，应为空
+        assert_eq!(second.get().ai.api_key, "");
+        // 真正的 key 存在 .ai_key 文件里
+        assert_eq!(second.get_api_key().expect("read key"), "sk-test");
         assert_eq!(second.get().ai.model, "gpt-4o-mini");
     }
 
@@ -307,4 +365,14 @@ mod tests {
         let (dir, prefs) = store();
         assert_eq!(prefs.path(), dir.path().join("preferences.json"));
     }
+}
+
+/// 主题模式。默认跟随系统——三个值就够了，不需要更多档位。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
 }

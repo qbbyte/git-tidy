@@ -4,6 +4,9 @@ import type { AiConfig } from "@/lib/ai";
 /** 与 Rust 侧 store/prefs.rs 的 Preferences 一一对应（camelCase）。 */
 export type PullStrategy = "ff_only" | "rebase" | "merge";
 
+/** 主题模式：跟随系统 / 月之亮面 / 月之暗面 */
+export type ThemeMode = "system" | "light" | "dark";
+
 export interface FlowPrefixes {
   feature: string;
   hotfix: string;
@@ -30,6 +33,7 @@ export type { AiConfig };
 
 export interface Preferences {
   pullStrategy: PullStrategy;
+  theme: ThemeMode;
   flowPrefixes: FlowPrefixes;
   autoUpdate: boolean;
   columns: Columns;
@@ -53,6 +57,19 @@ export function prefsReset() {
 /** 设置文件在哪：设置页要把它显示出来 */
 export function prefsPath() {
   return call<string>("prefs_path", {});
+}
+
+/// API key 不再随通用偏好返回，单独管理。
+export function aiApiKeyGet() {
+  return call<string>("ai_api_key_get", {});
+}
+
+export function aiApiKeySet(key: string) {
+  return call<void>("ai_api_key_set", { key });
+}
+
+export function aiApiKeyClear() {
+  return call<void>("ai_api_key_clear", {});
 }
 
 export function openTerminal(repoId: number) {

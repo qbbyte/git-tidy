@@ -15,6 +15,9 @@ import {
   type MenuOption,
 } from "naive-ui";
 import { PULL_STRATEGY_LABEL, type AiConfig, type PullStrategy } from "@/api/prefs";
+import { THEME_LABELS } from "@/composables/useTheme";
+import type { ThemeMode } from "@/api/prefs";
+import { aiApiKeyGet, aiApiKeySet } from "@/api/prefs";
 import { validateConfig } from "@/lib/ai";
 import { usePrefsStore } from "@/stores/prefs";
 import { checkForUpdate, updateEndpoint, type CheckResult } from "@/api/update";
@@ -59,8 +62,17 @@ const pullOptions = (Object.keys(PULL_STRATEGY_LABEL) as PullStrategy[]).map((va
   value,
 }));
 
+const themeOptions = (["system", "light", "dark"] as ThemeMode[]).map((value) => ({
+  label: THEME_LABELS[value],
+  value,
+}));
+
+function setTheme(value: ThemeMode) {
+  prefsStore.patch(() => ({ theme: value }));
+}
+
 const columnOptions = [
-  { key: "refs" as const, label: "引用徽标（分支 / 标签）" },
+  { key: "refs" as const, label: "描述列显示引用标签" },
   { key: "author" as const, label: "作者" },
   { key: "time" as const, label: "时间" },
   { key: "sha" as const, label: "提交号" },
@@ -171,7 +183,13 @@ watch(
   (value) => {
     if (!value || sameAi(value, aiDraft.value)) return;
     if (aiTimer !== undefined) return;
-    aiDraft.value = { ...value };
+    // prefs_get 不再返回 apiKey（返回空串），只同步 endpoint + model，
+    // apiKey 从单独的 aiApiKeyGet 加载（见 onMounted）
+    aiDraft.value = {
+      endpoint: value.endpoint,
+      apiKey: aiDraft.value.apiKey,
+      model: value.model,
+    };
   },
   { immediate: true },
 );
@@ -182,7 +200,11 @@ function saveAi() {
     aiTimer = undefined;
   }
   if (!prefs.value) return;
-  prefsStore.patch(() => ({ ai: { ...aiDraft.value } }));
+  // endpoint + model 走通用偏好；api_key 单独存到 .ai_key 文件
+  prefsStore.patch(() => ({
+    ai: { endpoint: aiDraft.value.endpoint, apiKey: "", model: aiDraft.value.model },
+  }));
+  void aiApiKeySet(aiDraft.value.apiKey);
 }
 
 function setAi(field: keyof AiConfig, value: string) {
@@ -201,6 +223,12 @@ onBeforeUnmount(() => {
 
 onMounted(async () => {
   await prefsStore.load();
+  // API key 单独加载——不再随 prefs_get 返回
+  try {
+    aiDraft.value = { ...aiDraft.value, apiKey: await aiApiKeyGet() };
+  } catch {
+    // 读不到就用空串，用户重新填一次即可
+  }
   void ensureReleasesPage();
 });
 </script>
@@ -253,6 +281,23 @@ onMounted(async () => {
               />
               <span class="muted">
                 默认是"只快进"：远端有本地没有的提交就停下来问，不自动制造合并提交
+              </span>
+            </div>
+          </n-card>
+
+          <n-card size="small" title="外观">
+            <div class="row">
+              <span class="label">主题</span>
+              <n-select
+                :value="prefs?.theme ?? 'system'"
+                :options="themeOptions"
+                size="small"
+                style="width: 260px"
+                :disabled="!prefs"
+                @update:value="setTheme"
+              />
+              <span class="muted">
+                月之亮面是浅色主题，月之暗面是深色主题，跟随系统会自动切换
               </span>
             </div>
           </n-card>

@@ -137,6 +137,65 @@ export const tokens = {
 export type TokenName = keyof typeof tokens;
 
 /**
+ * 暗色主题的 token 覆盖。
+ *
+ * 只列与亮色不同的值——切换时先把亮色全量铺好，再用这张表覆盖差异项。
+ * 维护原则：亮色加了一个新 token，暗色这里要么也加一行，要么确认亮色值在暗底下也能用。
+ */
+export const darkTokens: Partial<Record<TokenName, string>> = {
+  surfaceApp: "#1a1a1e",
+  surface: "#232328",
+  surfaceSunken: "#1a1a1e",
+  surfaceHover: "#2c2c32",
+  surfaceSelected: "#1a3a5c",
+
+  border: "#38383e",
+  borderSoft: "#2e2e34",
+  borderStrong: "#45454d",
+
+  text1: "#e4e4e7",
+  text2: "#a1a1aa",
+  text3: "#71717a",
+
+  accent: "#3b8eff",
+  accentHover: "#5ba2ff",
+  accentPressed: "#2a7adf",
+
+  outgoing: "#a78bfa",
+
+  warnBg: "#3d2e1a",
+  warnBorder: "#6b5224",
+  warnText: "#fbbf24",
+  errorBg: "#3d1e1e",
+  errorBorder: "#7a3a32",
+  errorText: "#f87171",
+  okBg: "#1a3d28",
+  okText: "#4ade80",
+
+  surfaceAlt: "#1a2640",
+
+  badgeBranchBg: "#1e3a52",
+  badgeBranchText: "#7cc4f5",
+  badgeRemoteBg: "#2a2d36",
+  badgeRemoteText: "#9ca3af",
+  badgeTagBg: "#3d321a",
+  badgeTagText: "#fbbf24",
+  badgeHeadBg: "#2e1d4a",
+  badgeHeadText: "#c4a5f5",
+  badgeMoreBg: "#2e2e34",
+  badgeMoreText: "#9ca3af",
+
+  statusRenameBg: "#4a54b0",
+
+  codeComment: "#8b8b96",
+  codeString: "#4ade80",
+  codeNumber: "#fbbf24",
+  codeKeyword: "#c4a5f5",
+  codeFunction: "#60a5fa",
+  codeType: "#f59e0b",
+};
+
+/**
  * token 名 → CSS 变量名。`surfaceApp` → `--surface-app`，`text1` → `--text-1`。
  *
  * 数字前也要补横线：`text1` 直接转出来是 `text1`，而样式里写的是 `--text-1`——
@@ -218,4 +277,29 @@ export function installTokens(target: Document = document): void {
   style.setAttribute("data-git-tidy-tokens", "");
   style.textContent = `:root {\n${declarations}\n--font-mono: ${FONT_MONO};\n}`;
   target.head.appendChild(style);
+}
+
+/**
+ * 切换暗色 token。在亮色铺好的基础上，用 `darkTokens` 覆盖差异项。
+ * 传 `true` 上暗色、`false` 回亮色。
+ */
+export function toggleDarkTokens(dark: boolean, target: Document = document): void {
+  const root = target.documentElement;
+  if (dark) {
+    const declarations = Object.entries(darkTokens)
+      .map(([name, value]) => `--${toKebab(name)}: ${value};`)
+      .join("\n");
+    let style = target.querySelector<HTMLStyleElement>("style[data-git-tidy-dark]");
+    if (!style) {
+      style = target.createElement("style");
+      style.setAttribute("data-git-tidy-dark", "");
+      target.head.appendChild(style);
+    }
+    style.textContent = `:root {\n${declarations}\n}`;
+  } else {
+    const style = target.querySelector<HTMLStyleElement>("style[data-git-tidy-dark]");
+    if (style) style.textContent = "";
+  }
+  root.setAttribute("data-theme", dark ? "dark" : "light");
+  root.style.colorScheme = dark ? "dark" : "light";
 }
