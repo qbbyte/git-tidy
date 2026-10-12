@@ -376,14 +376,25 @@ onBeforeUnmount(() => {
                 <code v-if="outgoingBranch" class="outgoing-branch">{{ outgoingBranch }}</code>
               </div>
 
-              <!-- 列宽拖拽手柄（绝对定位在列表右上，悬浮于行上方） -->
-              <div class="col-resize-bar" :style="{ gridTemplateColumns: gridCols }">
-                <span class="col-handle-spacer" />
-                <span class="col-handle-spacer" />
-                <span class="col-handle" @pointerdown="columns.makeHandle('refs')" @dblclick="columns.resetColumn('refs')" />
-                <span class="col-handle" @pointerdown="columns.makeHandle('sha')" @dblclick="columns.resetColumn('sha')" />
-                <span class="col-handle" @pointerdown="columns.makeHandle('author')" @dblclick="columns.resetColumn('author')" />
-                <span class="col-handle" @pointerdown="columns.makeHandle('time')" @dblclick="columns.resetColumn('time')" />
+              <!-- 列标题行：标题文字 + 列宽拖拽手柄 -->
+              <div class="col-header" :style="{ gridTemplateColumns: gridCols }">
+                <span class="hdr-subject">描述</span>
+                <span class="hdr-refs">
+                  引用
+                  <i class="hdr-resize" @pointerdown="columns.makeHandle('refs')" @dblclick="columns.resetColumn('refs')" />
+                </span>
+                <span class="hdr-sha">
+                  SHA
+                  <i class="hdr-resize" @pointerdown="columns.makeHandle('sha')" @dblclick="columns.resetColumn('sha')" />
+                </span>
+                <span class="hdr-author">
+                  作者
+                  <i class="hdr-resize" @pointerdown="columns.makeHandle('author')" @dblclick="columns.resetColumn('author')" />
+                </span>
+                <span class="hdr-time">
+                  时间
+                  <i class="hdr-resize" @pointerdown="columns.makeHandle('time')" @dblclick="columns.resetColumn('time')" />
+                </span>
               </div>
 
               <div
@@ -610,29 +621,44 @@ onBeforeUnmount(() => {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.col-resize-bar {
+.col-header {
   display: grid;
-  height: 0;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px 0 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
   position: sticky;
   top: 0;
-  z-index: 2;
-}
-
-.col-handle {
-  position: relative;
-  cursor: col-resize;
-}
-
-.col-handle::after {
-  content: "";
-  position: absolute;
-  inset: 0 -4px;
   z-index: 3;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-.col-handle:hover::after {
+.col-header > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.hdr-resize {
+  flex: none;
+  width: 3px;
+  height: 16px;
+  margin-left: auto;
+  cursor: col-resize;
+  background: var(--border);
+  border-radius: 2px;
+  transition: background 120ms ease;
+}
+
+.hdr-resize:hover {
   background: var(--accent);
-  opacity: 0.3;
 }
 
 .col-subject {
