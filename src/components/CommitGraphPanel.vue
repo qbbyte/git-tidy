@@ -20,11 +20,11 @@ const props = defineProps<{
 }>();
 
 const ROW_H = COMMIT_ROW_HEIGHT;
-const LANE_W = 26;
-const DOT_R = 5.5;
-const MERGE_R = 4.5;
+const LANE_W = 14;
+const DOT_R = 4.5;
+const MERGE_R = 3.5;
 const STROKE_W = 2;
-const PAD_LEFT = 12;
+const PAD_LEFT = 6;
 
 /** 未推送提交的线条色——从 CSS 变量取，与全局主题一致 */
 const OUTGOING_COLOR = "var(--outgoing)";

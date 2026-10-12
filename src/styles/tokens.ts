@@ -197,10 +197,10 @@ export const RADIUS_CARD = "6px";
  * 和圆点算垂直偏移，CSS 里的 `.commit-row` 高度也必须与之一致，否则线和点会对不上行。
  * 所以它定义在这里，`CommitGraphPanel.vue` 和 `CommitsView.vue` 都从这里取。
  *
- * 44px 的由来：重设计后每行有两层信息（主体 + 元数据），44px 让两层都呼吸得开，
- * 分支线的 S 形弯转也有足够弧度。1366×768 下能看 ~14 行，够扫历史。
+ * 36px 的由来：单行横向布局，格子刚好放下 13px 描述文字和 11px 元数据列，
+ * 分支线弧度也不会太夸张。1366×768 下能看 ~18 行。
  */
-export const COMMIT_ROW_HEIGHT = 44;
+export const COMMIT_ROW_HEIGHT = 36;
 
 /**
  * 把 token 铺成 CSS 自定义属性。

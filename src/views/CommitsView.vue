@@ -23,6 +23,7 @@ import { useWriteStore } from "@/stores/write";
 import { specFor } from "@/api/spec";
 import { usePrefsStore } from "@/stores/prefs";
 import { usePaneDivider } from "@/composables/usePaneDivider";
+import { useColumnResize } from "@/composables/useColumnResize";
 import { isTypingTarget } from "@/shortcuts";
 import type { Commit, CommitFilter, GraphRow } from "@/api/commit";
 
@@ -73,6 +74,17 @@ function pick(sha: string) {
   if (repoId.value === null) return;
   void detail.open(repoId.value, sha, commit);
 }
+
+/** 提交列表的列定义——主体列 flex 占满，其余列可拖拽调宽 */
+const columns = useColumnResize("history", [
+  { key: "subject", defaultWidth: 0, minWidth: 0, flex: true },
+  { key: "refs", defaultWidth: 160, minWidth: 60 },
+  { key: "sha", defaultWidth: 80, minWidth: 50 },
+  { key: "author", defaultWidth: 100, minWidth: 50 },
+  { key: "time", defaultWidth: 120, minWidth: 60 },
+]);
+
+const gridCols = computed(() => columns.gridTemplate());
 
 /** 详情栏的分栏宽度 */
 const splitContainer = ref<HTMLElement | null>(null);
@@ -364,15 +376,27 @@ onBeforeUnmount(() => {
                 <code v-if="outgoingBranch" class="outgoing-branch">{{ outgoingBranch }}</code>
               </div>
 
+              <!-- 列宽拖拽手柄（绝对定位在列表右上，悬浮于行上方） -->
+              <div class="col-resize-bar" :style="{ gridTemplateColumns: gridCols }">
+                <span class="col-handle-spacer" />
+                <span class="col-handle-spacer" />
+                <span class="col-handle" @pointerdown="columns.makeHandle('refs')" @dblclick="columns.resetColumn('refs')" />
+                <span class="col-handle" @pointerdown="columns.makeHandle('sha')" @dblclick="columns.resetColumn('sha')" />
+                <span class="col-handle" @pointerdown="columns.makeHandle('author')" @dblclick="columns.resetColumn('author')" />
+                <span class="col-handle" @pointerdown="columns.makeHandle('time')" @dblclick="columns.resetColumn('time')" />
+              </div>
+
               <div
                 v-for="commit in commitStore.commits"
                 :key="commit.id"
                 class="commit-row"
                 :class="{ selected: commit.id === detail.sha }"
+                :style="{ gridTemplateColumns: gridCols }"
                 @click="pick(commit.id)"
                 @contextmenu.prevent="openMenu($event, commit.id)"
               >
-                <div class="row-main">
+                <!-- 描述列（flex 占满） -->
+                <div class="col-subject">
                   <n-tag :type="typeColor(commit)" size="small" :bordered="false" class="type-tag">
                     {{ typeLabel(commit) }}
                   </n-tag>
@@ -381,21 +405,27 @@ onBeforeUnmount(() => {
                   <n-tag v-if="commit.merge" type="warning" size="small" :bordered="false">merge</n-tag>
                   <span class="subject" :title="commit.subject">{{ commit.subject }}</span>
                 </div>
-                <div class="row-meta">
-                  <div v-if="prefs.refs && commit.refs.length" class="refs">
-                    <span v-if="commit.head && !commit.refs.some((b) => b.head)" class="badge current">HEAD</span>
-                    <span
-                      v-for="badge in commit.refs.slice(0, 4)"
-                      :key="`${badge.kind}:${badge.name}`"
-                      class="badge"
-                      :class="[badge.kind, { head: badge.head }]"
-                    >{{ badge.name }}</span>
-                    <span v-if="commit.refs.length > 4" class="badge more">+{{ commit.refs.length - 4 }}</span>
-                  </div>
-                  <code v-if="prefs.sha" class="sha">{{ commit.id.slice(0, 8) }}</code>
-                  <span v-if="prefs.author" class="author">{{ commit.authorName }}</span>
-                  <span v-if="prefs.time" class="time">{{ dayjs(commit.time * 1000).format("MM-DD HH:mm") }}</span>
+                <!-- 引用列 -->
+                <div v-if="prefs.refs" class="col-refs">
+                  <span v-if="commit.head && !commit.refs.some((b) => b.head)" class="badge current">HEAD</span>
+                  <span
+                    v-for="badge in commit.refs.slice(0, 4)"
+                    :key="`${badge.kind}:${badge.name}`"
+                    class="badge"
+                    :class="[badge.kind, { head: badge.head }]"
+                  >{{ badge.name }}</span>
+                  <span v-if="commit.refs.length > 4" class="badge more">+{{ commit.refs.length - 4 }}</span>
                 </div>
+                <div v-else class="col-refs" />
+                <!-- SHA 列 -->
+                <code v-if="prefs.sha" class="col-sha">{{ commit.id.slice(0, 8) }}</code>
+                <div v-else class="col-sha" />
+                <!-- 作者列 -->
+                <span v-if="prefs.author" class="col-author">{{ commit.authorName }}</span>
+                <div v-else class="col-author" />
+                <!-- 时间列 -->
+                <span v-if="prefs.time" class="col-time">{{ dayjs(commit.time * 1000).format("MM-DD HH:mm") }}</span>
+                <div v-else class="col-time" />
               </div>
             </div>
           </template>
@@ -562,11 +592,10 @@ onBeforeUnmount(() => {
 
 /* ---- 提交行 ---- */
 .commit-row {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  height: 44px;
-  padding: 5px 14px;
+  display: grid;
+  align-items: center;
+  height: 36px;
+  padding: 0 8px 0 6px;
   border-bottom: 1px solid var(--border-soft);
   cursor: pointer;
   transition: background 100ms ease;
@@ -581,11 +610,38 @@ onBeforeUnmount(() => {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.row-main {
+.col-resize-bar {
+  display: grid;
+  height: 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.col-handle {
+  position: relative;
+  cursor: col-resize;
+}
+
+.col-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+  z-index: 3;
+}
+
+.col-handle:hover::after {
+  background: var(--accent);
+  opacity: 0.3;
+}
+
+.col-subject {
   display: flex;
   align-items: center;
   gap: 4px;
   overflow: hidden;
+  min-width: 0;
+  padding-right: 8px;
 }
 
 .type-tag {
@@ -605,21 +661,12 @@ onBeforeUnmount(() => {
   color: var(--text-1);
 }
 
-.row-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
-  color: var(--text-3);
-  overflow: hidden;
-}
-
-.refs {
+.col-refs {
   display: flex;
   align-items: center;
   gap: 3px;
-  max-width: 200px;
   overflow: hidden;
+  min-width: 0;
 }
 
 .badge {
@@ -641,23 +688,28 @@ onBeforeUnmount(() => {
 .badge.head { font-weight: 600; box-shadow: inset 0 0 0 1px currentColor; }
 .badge.more { color: var(--badge-more-text); background: var(--badge-more-bg); }
 
-.sha {
+.col-sha {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-3);
-  flex: none;
-}
-
-.author {
-  flex: none;
-  white-space: nowrap;
-  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.time {
-  flex: none;
+.col-author {
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-time {
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -666,7 +718,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 44px;
+  height: 36px;
   padding: 0 14px;
   background: var(--surface-hover);
   border-bottom: 1px solid var(--border);
