@@ -74,6 +74,9 @@ pub fn run() {
             commands::prefs::prefs_update,
             commands::prefs::prefs_reset,
             commands::prefs::prefs_path,
+            commands::prefs::ai_api_key_get,
+            commands::prefs::ai_api_key_set,
+            commands::prefs::ai_api_key_clear,
             commands::shell::shell_open_terminal,
             // M5 §7.24：检查更新（只查不装）
             commands::update::update_compare,

@@ -17,9 +17,19 @@ use crate::store::repos::{self, derive_name, Repo, RepoKind};
 /// 所以在子目录里添加也能落到仓库根。此后所有命令一律走 id（§7.1）。
 #[tauri::command]
 pub async fn repo_add(state: State<'_, Arc<Db>>, path: String) -> Result<Repo, GitError> {
+    // 前端传进来的路径是唯一不经 id 解析的入口：长度和控制字符各卡一道，
+    // 防止拿几百 KB 的串或含 \0 的路径去喂 git。
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed.len() > 4096 {
+        return Err(GitError::Internal("路径为空或过长".into()));
+    }
+    if trimmed.chars().any(|c| c == '\0') {
+        return Err(GitError::Internal("路径包含非法字符".into()));
+    }
+    let path = trimmed.to_string();
     let info = tauri::async_runtime::spawn_blocking(move || repo::probe(Path::new(&path)))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))??;
+        .map_err(GitError::internal)??;
 
     let canonical = info.work_tree.to_string_lossy().into_owned();
     query(state.inner().clone(), move |conn| {
@@ -38,7 +48,7 @@ pub async fn info_of(db: &Arc<Db>, id: i64) -> Result<(RepoInfo, RepoKind), GitE
     let (path, kind) = query(db.clone(), move |conn| repos::locate(conn, id)).await?;
     let info = tauri::async_runtime::spawn_blocking(move || repo::probe(&path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))??;
+        .map_err(GitError::internal)??;
     Ok((info, kind))
 }
 
@@ -90,7 +100,7 @@ pub async fn worktree_status(
 
     tauri::async_runtime::spawn_blocking(move || status::list(&path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 暂存勾选的文件。返回整份最新状态而不是"成功"，界面就不用再补一次读取，
@@ -105,7 +115,7 @@ pub async fn files_stage(
 
     tauri::async_runtime::spawn_blocking(move || status::stage(&path, &paths))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 #[tauri::command]
@@ -118,7 +128,7 @@ pub async fn files_unstage(
 
     tauri::async_runtime::spawn_blocking(move || status::unstage(&path, &paths))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 写路径的共用闸门：解析 id → 必须是本地工作区仓库（§7.5）。

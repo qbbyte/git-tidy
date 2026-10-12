@@ -22,7 +22,7 @@ pub async fn commit_detail(
 
     tauri::async_runtime::spawn_blocking(move || detail::read(&path, &sha))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 提交号要拼进 git 的参数位，所以先确认它只可能是十六进制。

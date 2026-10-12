@@ -395,9 +395,13 @@ fn apply_patch(repo: &Path, patch: &str) -> Result<Vec<WorkingFile>, GitError> {
 /// 而清理失败也只是下次多一个文件。
 fn write_patch(repo: &Path, patch: &str) -> Result<String, GitError> {
     let dir = process::run(Some(repo), &["rev-parse", "--git-dir"])?.expect_success()?;
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.subsec_nanos())
+        .unwrap_or_default();
     let path = repo
         .join(std::path::Path::new(dir.trim()))
-        .join(format!("git-tidy-patch-{}", std::process::id()));
+        .join(format!("git-tidy-patch-{}-{unique}", std::process::id()));
     std::fs::write(&path, patch)
         .map_err(|err| GitError::Internal(format!("写补丁临时文件失败：{err}")))?;
     Ok(path.to_string_lossy().into_owned())

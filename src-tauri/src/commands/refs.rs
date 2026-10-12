@@ -34,5 +34,5 @@ pub async fn refs_scan(state: State<'_, Arc<Db>>, id: i64) -> Result<Scan, GitEr
         })
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }

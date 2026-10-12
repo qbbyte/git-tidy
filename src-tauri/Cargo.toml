@@ -26,6 +26,9 @@ tauri-plugin-dialog = "2.8.1"
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 # 任务 ID 规则与 cliff.toml 的 commit_parsers 都是模式匹配，手写状态机不值得
 regex = "1"
+# 原子文件写入：NamedTempFile::persist 在 Windows 上走 MoveFileExW(REPLACE_EXISTING)，
+# 消除旧版 remove_file + rename 之间的非原子窗口
+tempfile = "3"
 
 [dev-dependencies]
 tempfile = "3"

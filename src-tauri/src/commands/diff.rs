@@ -28,7 +28,7 @@ pub async fn worktree_file_diff(
         diff::read_worktree(&repo_path, &path, old_path.as_deref(), ignore_white_space)
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 已暂存的那一半：HEAD → 索引（提交页「已暂存」列的预览）。
@@ -54,7 +54,7 @@ pub async fn staged_file_diff(
         diff::read_staged(&repo_path, &path, old_path.as_deref(), ignore_white_space)
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 提交表单的「AI 生成」要用的一整片暂存区 diff（§AI）。
@@ -73,7 +73,7 @@ pub async fn commit_diff(state: State<'_, Arc<Db>>, id: i64) -> Result<String, G
 
     tauri::async_runtime::spawn_blocking(move || diff::staged_text(&repo_path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 单个文件的差异（§7.5）。一次点一个文件：整条提交所有文件的 diff 一起回，
@@ -104,5 +104,5 @@ pub async fn commit_file_diff(
         )
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }

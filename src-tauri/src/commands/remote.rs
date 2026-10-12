@@ -138,7 +138,7 @@ pub async fn repo_add_remote(
             })
         })
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))??;
+        .map_err(GitError::internal)??;
         repo::probe(&dest.path)?
     };
 
@@ -180,7 +180,7 @@ pub async fn repo_materialize(
         })
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))??;
+    .map_err(GitError::internal)??;
 
     query(state.inner().clone(), move |conn| {
         repos::set_kind(conn, id, RepoKind::Worktree)

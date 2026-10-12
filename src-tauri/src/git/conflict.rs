@@ -530,6 +530,14 @@ fn absolute(repo: &Path, path: &str) -> Result<std::path::PathBuf, GitError> {
             snippet: process::snippet(path),
         });
     }
+    // `.git` 内部路径一律拒绝：写到 `.git/config` 或 `.git/hooks/post-checkout`
+    // 等同于任意代码执行。界面给的路径只可能是索引里那些工作区文件，
+    // 但校验放在 Rust 侧才有效——前端可以被绕过。
+    if is_git_internal(path) {
+        return Err(GitError::ParseFailure {
+            snippet: process::snippet(path),
+        });
+    }
     let root = repo.canonicalize().map_err(|_| GitError::NotARepo)?;
     let joined = root.join(path);
     let normalized = normalize(&joined);
@@ -538,7 +546,47 @@ fn absolute(repo: &Path, path: &str) -> Result<std::path::PathBuf, GitError> {
             snippet: process::snippet(path),
         });
     }
+    // 规范化后再查一次：`foo/../.git/config` 之类在词法折叠后才暴露 `.git` 段
+    if let Ok(relative) = normalized.strip_prefix(&root) {
+        if is_git_internal_path(relative) {
+            return Err(GitError::ParseFailure {
+                snippet: process::snippet(path),
+            });
+        }
+    }
+    // 符号链接 / NTFS junction 可能让一条看起来在仓库内的路径指向仓库外。
+    // 对已存在的文件 canonicalize 一次，验证真实物理位置仍在 root 内。
+    // 不存在的文件（"接受删除"那条路）检查最近的已存在父目录。
+    let probe = if normalized.exists() {
+        normalized.clone()
+    } else {
+        normalized
+            .parent()
+            .filter(|p| p.starts_with(&root) && p.exists())
+            .map(|p| p.to_path_buf())
+            .unwrap_or(normalized.clone())
+    };
+    if let Ok(canonical) = probe.canonicalize() {
+        if !canonical.starts_with(&root) {
+            return Err(GitError::ParseFailure {
+                snippet: process::snippet(path),
+            });
+        }
+    }
     Ok(normalized)
+}
+
+/// 判断用户给的路径串是否指向 `.git` 内部。只做词法检查，用于 join 之前的早期拦截。
+fn is_git_internal(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    normalized == ".git"
+        || normalized.starts_with(".git/")
+        || normalized.split('/').any(|seg| seg == ".git")
+}
+
+/// 判断一条相对于仓库根的 `Path` 是否落在 `.git` 子树内。
+fn is_git_internal_path(relative: &std::path::Path) -> bool {
+    relative.components().any(|comp| comp.as_os_str() == ".git")
 }
 
 /// 手写一遍 `.` / `..` 的折叠。`canonicalize` 在文件还不存在时（"接受删除"那条路）

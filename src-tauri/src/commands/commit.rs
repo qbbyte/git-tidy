@@ -39,7 +39,7 @@ pub async fn commit_list(
         log::list(&path, skip, limit, &filter, &spec)
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 读一条提交本身。从文件历史、blame 这些地方跳到一条不在当前列表页里的提交时用它。
@@ -54,7 +54,7 @@ pub async fn commit_show(
 
     tauri::async_runtime::spawn_blocking(move || log::show(&path, &sha))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 用表单内容提交。
@@ -77,5 +77,5 @@ pub async fn commit_create(
         commit::create(&path, &spec, &draft)
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }

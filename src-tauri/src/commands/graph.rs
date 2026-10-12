@@ -94,7 +94,7 @@ pub async fn commit_graph(
         page_of(&path, &cache, id, skip, count, &filter, &spec)
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 同一次 IPC 内的流程：问 HEAD → 命中就切片，没命中才走全历史。

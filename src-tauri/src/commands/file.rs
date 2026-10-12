@@ -29,7 +29,7 @@ pub async fn file_blame(
 
     tauri::async_runtime::spawn_blocking(move || blame::read(&repo_path, &rev, &path, &ignore_revs))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 一个文件的全部改动记录（§7.6）。走 `--follow`，历史跟着改名走。
@@ -48,7 +48,7 @@ pub async fn file_history(
 
     tauri::async_runtime::spawn_blocking(move || log::file_history(&repo_path, &path, skip, limit))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 某个修订的文件树（§7.6）。只读浏览：列的是提交里的内容，不碰工作区。
@@ -64,7 +64,7 @@ pub async fn file_tree(
 
     tauri::async_runtime::spawn_blocking(move || tree::list(&repo_path, &rev))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 某个修订里一个文件的正文。子模块指针没有正文，Rust 侧会失败，界面也不给入口。
@@ -82,7 +82,7 @@ pub async fn file_content(
 
     tauri::async_runtime::spawn_blocking(move || tree::content(&repo_path, &rev, &path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 工作区里一个文件的正文（未跟踪文件在提交页里的预览）。
@@ -106,7 +106,7 @@ pub async fn worktree_file_content(
 
     tauri::async_runtime::spawn_blocking(move || tree::worktree_content(&repo_path, &path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 修订号既可以是提交号，也可以是 `HEAD~2`、`main` 这类 rev。两种形态都要进 git 的

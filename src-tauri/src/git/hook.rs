@@ -350,8 +350,7 @@ pub fn install(repo: &Path, spec: &Spec, force: bool) -> Result<HookInstall, Git
         None => None,
         Some(_) => {
             let target = backup_path(&hook_path);
-            std::fs::copy(&hook_path, &target)
-                .map_err(|err| GitError::Internal(err.to_string()))?;
+            std::fs::copy(&hook_path, &target).map_err(GitError::internal)?;
             Some(display(&target))
         }
     };
@@ -404,7 +403,7 @@ pub fn uninstall(repo: &Path, spec: &Spec) -> Result<HookInstall, GitError> {
             status: status(repo, spec)?,
         });
     }
-    std::fs::remove_file(&hook_path).map_err(|err| GitError::Internal(err.to_string()))?;
+    std::fs::remove_file(&hook_path).map_err(GitError::internal)?;
     Ok(HookInstall {
         installed: false,
         hook_path: display(&hook_path),
@@ -447,15 +446,15 @@ fn refused(
 
 fn write_script(path: &Path, spec: &Spec) -> Result<(), GitError> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|err| GitError::Internal(err.to_string()))?;
+        std::fs::create_dir_all(dir).map_err(GitError::internal)?;
     }
-    std::fs::write(path, render(spec)).map_err(|err| GitError::Internal(err.to_string()))?;
+    std::fs::write(path, render(spec)).map_err(GitError::internal)?;
     // 没有可执行位，git 会静默跳过这个 hook——装完了却"不生效"是最难查的一类问题
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-            .map_err(|err| GitError::Internal(err.to_string()))?;
+            .map_err(GitError::internal)?;
     }
     Ok(())
 }

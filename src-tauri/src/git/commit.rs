@@ -70,7 +70,7 @@ pub fn create(repo: &Path, spec: &Spec, draft: &Draft) -> Result<Commit, GitErro
         return Err(GitError::NothingStaged);
     }
 
-    let message_file = temp_message(draft)?;
+    let message_file = temp_message(repo, draft)?;
     let committed = process::run(Some(repo), &["commit", "-F", &message_file]);
     let _ = std::fs::remove_file(&message_file);
     committed?.expect_success()?;
@@ -89,13 +89,19 @@ pub fn preview(spec: &Spec, draft: &Draft) -> Outcome {
 }
 
 /// 提交信息写成临时文件，用 `commit -F` 读：走 `-m` 拼接会把正文和脚注的换行弄丢。
-fn temp_message(draft: &Draft) -> Result<String, GitError> {
+fn temp_message(repo: &Path, draft: &Draft) -> Result<String, GitError> {
+    // 写在 .git 目录旁边而不是系统临时目录：
+    // 1. 同一卷上 git 读它更快；
+    // 2. 系统临时目录的权限不是当前仓库独享的，多用户机器上别的用户能读到提交信息；
+    // 3. 崩溃后遗留的文件在仓库目录里更容易被发现和清理。
+    let git_dir = process::run(Some(repo), &["rev-parse", "--git-dir"])?.expect_success()?;
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.subsec_nanos())
         .unwrap_or_default();
-    let path =
-        std::env::temp_dir().join(format!("git-tidy-msg-{}-{unique}.txt", std::process::id()));
+    let path = repo
+        .join(std::path::Path::new(git_dir.trim()))
+        .join(format!("git-tidy-msg-{}-{unique}.txt", std::process::id()));
     std::fs::write(&path, draft.compose())
         .map_err(|err| GitError::Internal(format!("写提交信息临时文件失败：{err}")))?;
     Ok(path.to_string_lossy().into_owned())

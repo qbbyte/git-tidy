@@ -34,7 +34,7 @@ pub async fn compliance_report(
         compliance::build(&path, &loaded, &range)
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))??;
+    .map_err(GitError::internal)??;
     Ok(loaded)
 }
 
@@ -64,7 +64,7 @@ pub async fn commit_activity(
     // 只读浏览仓库也能统计：它有完整历史，只是没有工作区
     tauri::async_runtime::spawn_blocking(move || activity::build(&path, &filter))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 可选区间：HEAD、tag、`a..b`。界面把它当输入提示给用户，而不是让人手填 rev 语法。
@@ -76,7 +76,7 @@ pub async fn compliance_revisions(
     let (path, _kind) = query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
     tauri::async_runtime::spawn_blocking(move || revisions(&path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 fn revisions(repo: &std::path::Path) -> Result<Vec<String>, GitError> {

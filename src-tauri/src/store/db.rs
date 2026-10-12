@@ -88,7 +88,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || f(&lock(&db.conn)))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 fn migrate(conn: &Connection) -> Result<(), GitError> {

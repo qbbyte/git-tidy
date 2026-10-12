@@ -33,7 +33,7 @@ pub async fn changelog_build(
         changelog::build(&path, &loaded, &range)
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 区间候选：上一个 tag（可为空）+ 最近若干 tag，供界面下拉。
@@ -47,7 +47,7 @@ pub async fn changelog_previous_tag(
     let to = to.unwrap_or_else(|| "HEAD".to_string());
     tauri::async_runtime::spawn_blocking(move || changelog::previous_tag(&path, &to))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))
+        .map_err(GitError::internal)
 }
 
 /// 写操作的结果：除了"写到哪了"，还要给得出"怎么回去"。
@@ -85,7 +85,7 @@ const TAIL_LIMIT: usize = 4000;
 #[tauri::command]
 pub async fn changelog_read_target(path: String) -> Result<TargetPreview, GitError> {
     tauri::async_runtime::spawn_blocking(move || {
-        let bytes = std::fs::read(&path).unwrap_or_default();
+        let bytes = read_target_bytes(std::path::Path::new(&path))?;
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let tail = if text.chars().count() > TAIL_LIMIT {
             let start = text
@@ -106,7 +106,7 @@ pub async fn changelog_read_target(path: String) -> Result<TargetPreview, GitErr
         })
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 追加/写入 CHANGELOG 文件（需求 6.5：写前展示 diff，路径走 dialog 授权）。
@@ -131,6 +131,10 @@ pub async fn changelog_write(
     if target.is_dir() {
         return Err(GitError::Internal("选中的是一个目录，不是文件".into()));
     }
+    // 拒绝 `.git` 内部路径：写入 `.git/config` / `.git/hooks/*` 等于任意代码执行
+    if is_git_internal_path(&target) {
+        return Err(GitError::Internal("不允许写入 .git 目录内的文件".into()));
+    }
     let repo = query(state.inner().clone(), move |conn| {
         repos::ensure_worktree(conn, id)
     })
@@ -141,7 +145,7 @@ pub async fn changelog_write(
         write_changelog(&db, id, &repo, &target, &markdown, &expected_digest)
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 fn write_changelog(
@@ -152,7 +156,7 @@ fn write_changelog(
     markdown: &str,
     expected_digest: &str,
 ) -> Result<AppendResult, GitError> {
-    let existing = std::fs::read(target).unwrap_or_default();
+    let existing = read_target_bytes(target)?;
     let actual = changelog::digest(&existing);
     if actual != expected_digest {
         return Err(GitError::ConcurrentEdit {
@@ -249,33 +253,36 @@ fn is_dirty(repo: &std::path::Path, target: &std::path::Path) -> Result<bool, Gi
 
 /// 同目录临时文件 + rename：写到一半断电也不会把原来的 CHANGELOG 截断成半个文件。
 fn atomic_write(target: &std::path::Path, bytes: &[u8]) -> Result<(), GitError> {
-    let temp = target.with_extension("md.git-tidy-tmp");
-    std::fs::write(&temp, bytes).map_err(|err| GitError::Internal(err.to_string()))?;
-    if let Err(err) = replace_file(&temp, target) {
-        let _ = std::fs::remove_file(&temp);
-        return Err(GitError::Internal(err.to_string()));
-    }
+    use std::io::Write;
+    let parent = target
+        .parent()
+        .ok_or_else(|| GitError::Internal(format!("无法确定 {} 的父目录", target.display())))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|err| GitError::Internal(format!("无法创建 {}：{err}", parent.display())))?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|err| GitError::Internal(format!("无法创建临时文件：{err}")))?;
+    tmp.write_all(bytes)
+        .map_err(|err| GitError::Internal(format!("无法写入临时文件：{err}")))?;
+    tmp.persist(target)
+        .map_err(|err| GitError::Internal(format!("无法替换目标文件：{err}")))?;
     Ok(())
-}
-
-#[cfg(unix)]
-fn replace_file(from: &std::path::Path, to: &std::path::Path) -> Result<(), std::io::Error> {
-    std::fs::rename(from, to)
-}
-
-/// Windows 上 `rename` 不覆盖已存在的目标，得先删——所以走"删旧 + 改名"两步。
-/// 删与改之间有一个极短的窗口，这是 Windows 文件 API 的限制；
-/// 真要原子覆盖得用 `ReplaceFileW`，那要引 WinAPI 依赖，不值当。
-#[cfg(windows)]
-fn replace_file(from: &std::path::Path, to: &std::path::Path) -> Result<(), std::io::Error> {
-    if to.exists() {
-        std::fs::remove_file(to)?;
-    }
-    std::fs::rename(from, to)
 }
 
 fn zero_oid() -> &'static str {
     "0000000000000000000000000000000000000000"
+}
+
+/// 读目标文件，区分"文件不存在"（等价于空内容）与其它 IO 错误（权限不足等）。
+/// 旧版用 `unwrap_or_default()` 把所有错误都变成空串，掩盖了权限问题。
+fn read_target_bytes(target: &std::path::Path) -> Result<Vec<u8>, GitError> {
+    match std::fs::read(target) {
+        Ok(bytes) => Ok(bytes),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(err) => Err(GitError::Internal(format!(
+            "无法读取 {}：{err}",
+            target.display()
+        ))),
+    }
 }
 
 /// "文件不存在"与"文件是空的"是同一件事：写入结果一样，指纹也该一样。
@@ -296,6 +303,11 @@ fn relative_or_absolute(repo: &std::path::Path, target: &std::path::Path) -> Str
         Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
         Err(_) => target.to_string_lossy().into_owned(),
     }
+}
+
+/// 判断路径是否落在 `.git` 子树内——拒绝写入 git 内部文件（config/hooks/HEAD 等）。
+fn is_git_internal_path(path: &std::path::Path) -> bool {
+    path.components().any(|comp| comp.as_os_str() == ".git")
 }
 
 #[cfg(test)]

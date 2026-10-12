@@ -27,7 +27,7 @@ pub async fn shell_open_terminal(state: State<'_, Arc<Db>>, id: i64) -> Result<S
     .await?;
     tauri::async_runtime::spawn_blocking(move || open_terminal(&path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 fn open_terminal(dir: &Path) -> Result<String, GitError> {

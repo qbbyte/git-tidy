@@ -63,6 +63,12 @@ pub enum GitError {
 }
 
 impl GitError {
+    /// 把任何能 `Display` 的错误包装成 `Internal`。
+    /// 比 `map_err(|e| GitError::Internal(e.to_string()))` 短得多，用 `.map_err(GitError::internal)`。
+    pub fn internal<E: fmt::Display>(err: E) -> Self {
+        Self::Internal(err.to_string())
+    }
+
     fn code(&self) -> &'static str {
         match self {
             Self::GitNotFound => "git_not_found",

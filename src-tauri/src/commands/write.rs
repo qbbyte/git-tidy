@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 
+use crate::commands::detail::check_sha;
 use crate::error::GitError;
 use crate::git::branch::{self, Deletable};
 use crate::git::conflict::{self, Conflict};
@@ -112,7 +113,7 @@ async fn write(
         guard::run(&db, request, &mut move || body(&path))
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 // ---------------------------------------------------------------- 分支与标签（§7.10）
@@ -139,7 +140,7 @@ pub async fn branch_create(
         id,
         path,
         action,
-        Opts::clean()
+        Opts::light()
             .at(expected_head)
             .affecting(Some(name.clone()), Some(name.clone())),
         move |path| {
@@ -167,7 +168,7 @@ pub async fn branch_deletable(
     })?;
     tauri::async_runtime::spawn_blocking(move || branch::deletable(&path, &name, &base))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 #[tauri::command]
@@ -232,7 +233,7 @@ pub async fn branch_switch(
         id,
         path,
         "branch_switch",
-        Opts::clean()
+        Opts::light()
             .at(expected_head)
             .affecting(Some(name.clone()), Some(name.clone())),
         move |path| branch::switch(path, &name, create, start.as_deref()),
@@ -306,7 +307,7 @@ pub async fn stash_list(state: State<'_, Arc<Db>>, id: i64) -> Result<Vec<StashE
     let path = worktree(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || stash::list(&path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 #[tauri::command]
@@ -421,6 +422,10 @@ pub async fn op_cherry_pick(
 ) -> Result<Outcome, GitError> {
     let db = state.inner().clone();
     let path = worktree(&db, id).await?;
+    let shas = shas
+        .iter()
+        .map(|s| check_sha(s))
+        .collect::<Result<Vec<_>, _>>()?;
     write(
         db,
         id,
@@ -442,6 +447,7 @@ pub async fn op_revert(
 ) -> Result<Outcome, GitError> {
     let db = state.inner().clone();
     let path = worktree(&db, id).await?;
+    let sha = check_sha(&sha)?;
     write(
         db,
         id,
@@ -464,6 +470,7 @@ pub async fn op_reset(
 ) -> Result<Outcome, GitError> {
     let db = state.inner().clone();
     let path = worktree(&db, id).await?;
+    let target = check_sha(&target)?;
     let action = match mode {
         ResetMode::Soft => "reset_soft",
         ResetMode::Mixed => "reset_mixed",
@@ -520,7 +527,7 @@ pub async fn remote_fetch(
         })
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 #[tauri::command]
@@ -581,7 +588,7 @@ pub async fn remote_push(
         Ok(captured.expect("body 跑过就一定有结果"))
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))??;
+    .map_err(GitError::internal)??;
     Ok(report)
 }
 
@@ -609,7 +616,7 @@ pub async fn remote_delete_branch(
         Ok(captured.expect("body 跑过就一定有结果"))
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 // ---------------------------------------------------------------- 交互式改写（§7.14）
@@ -625,10 +632,12 @@ pub async fn rewrite_plan(
     base: String,
     head: String,
 ) -> Result<Vec<rewrite::PlanEntry>, GitError> {
+    let base = check_sha(&base)?;
+    let head = check_sha(&head)?;
     let path = worktree(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || rewrite::plan(&path, &base, &head))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 执行 todo。改写是本项目风险最高的写操作，六步一步不少（§4）。
@@ -647,6 +656,7 @@ pub async fn rewrite_run(
 ) -> Result<(Outcome, rewrite::RewriteReport), GitError> {
     let db = state.inner().clone();
     let path = worktree(&db, id).await?;
+    let base = check_sha(&base)?;
 
     let drops = todo.iter().any(|item| item.action.changes_tree());
     let mut opts = if drops {
@@ -692,7 +702,7 @@ pub async fn rewrite_run(
         Ok((outcome, captured.expect("body 跑过就一定有结果")))
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 区间里有多少条提交。超过 `LARGE_TODO` 时界面先提示分段再让人确认：
@@ -704,6 +714,8 @@ pub async fn rewrite_plan_size(
     base: String,
     head: String,
 ) -> Result<PlanSize, GitError> {
+    let base = check_sha(&base)?;
+    let head = check_sha(&head)?;
     let path = worktree(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || {
         let count = rewrite::plan(&path, &base, &head)?.len();
@@ -713,7 +725,7 @@ pub async fn rewrite_plan_size(
         })
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 #[derive(serde::Serialize)]
@@ -744,7 +756,7 @@ pub async fn file_partial_support(
         Ok(status::partial_supported(&repo_path, file))
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 按界面裁出来的补丁暂存。返回最新的整份工作区状态（与整文件暂存一个口径），
@@ -773,7 +785,7 @@ pub async fn files_stage_hunks(
         Ok(StagedFiles { outcome, files })
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 #[derive(serde::Serialize)]
@@ -794,7 +806,7 @@ pub async fn conflict_list(state: State<'_, Arc<Db>>, id: i64) -> Result<Vec<Con
     let repo_path = worktree(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || conflict::list(&repo_path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 解决一个冲突文件。`how` 为 `ours` / `theirs` / `text`（text 带手改正文）。
@@ -831,7 +843,7 @@ pub async fn conflict_resolve(
         })
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 界面上「接受删除」那一条。改删/删改冲突里有一方已经把这个文件删了。
@@ -863,7 +875,7 @@ pub async fn conflict_accept_deletion(
         })
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 全部标记完之后续跑（`--continue`）。
@@ -899,7 +911,7 @@ pub async fn conflict_continue(
         })
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))?
+    .map_err(GitError::internal)?
 }
 
 /// 界面传过来的解决方式。字符串形态而不是枚举，前端用 `call` 传参只能传 JSON 值。
@@ -962,7 +974,7 @@ pub async fn write_backups(state: State<'_, Arc<Db>>, id: i64) -> Result<Vec<Bac
     let repo_path = worktree(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || backup::list(&repo_path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 某个还原 ref 现在指向哪里。ref 可能已被 gc 或手动清掉，那时返回 None 而不是报错——
@@ -982,7 +994,7 @@ pub async fn write_backup_target(
     let reference = backup::check_reference(&reference)?;
     tauri::async_runtime::spawn_blocking(move || backup::target(&repo_path, &reference))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 撤销上一步。判据在 `guard::undo_last`：HEAD 不等于日志里的 `head_after` 就拒绝。
@@ -995,7 +1007,7 @@ pub async fn write_undo(state: State<'_, Arc<Db>>, id: i64) -> Result<guard::Und
     })?;
     tauri::async_runtime::spawn_blocking(move || guard::undo_last(&db, id, repo_path, head))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 日志条目给界面用的形态。`status` 翻成中文，别让前端各处自己拼。

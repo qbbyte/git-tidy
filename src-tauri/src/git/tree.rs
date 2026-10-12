@@ -113,7 +113,7 @@ pub fn content(repo: &Path, rev: &str, path: &str) -> Result<Content, GitError> 
 pub fn worktree_content(repo: &Path, path: &str) -> Result<Content, GitError> {
     let target = contained(repo, path)?;
     let size = std::fs::metadata(&target)
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
         .len();
 
     if size > MAX_TEXT_BYTES as u64 {
@@ -123,7 +123,7 @@ pub fn worktree_content(repo: &Path, path: &str) -> Result<Content, GitError> {
         return Ok(describe(path, &head, size));
     }
 
-    let bytes = std::fs::read(&target).map_err(|err| GitError::Internal(err.to_string()))?;
+    let bytes = std::fs::read(&target).map_err(GitError::internal)?;
     Ok(describe(path, &bytes, size))
 }
 
@@ -151,11 +151,11 @@ fn contained(repo: &Path, path: &str) -> Result<PathBuf, GitError> {
 /// 读前 `limit` 个字节。
 fn read_prefix(path: &Path, limit: usize) -> Result<Vec<u8>, GitError> {
     use std::io::Read;
-    let file = std::fs::File::open(path).map_err(|err| GitError::Internal(err.to_string()))?;
+    let file = std::fs::File::open(path).map_err(GitError::internal)?;
     let mut buffer = Vec::new();
     file.take(limit as u64)
         .read_to_end(&mut buffer)
-        .map_err(|err| GitError::Internal(err.to_string()))?;
+        .map_err(GitError::internal)?;
     Ok(buffer)
 }
 

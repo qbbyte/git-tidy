@@ -32,7 +32,7 @@ async fn resolve_spec(db: &Arc<Db>, id: i64) -> Result<Spec, GitError> {
         RepoKind::Browse => spec::load_at_head(&path),
     })
     .await
-    .map_err(|err| GitError::Internal(err.to_string()))
+    .map_err(GitError::internal)
 }
 
 /// 校验一条草稿信息但不提交。这是"实时提示"的入口，也是 hook 与报告共用的那颗内核
@@ -54,7 +54,7 @@ pub async fn commit_scopes(state: State<'_, Arc<Db>>, id: i64) -> Result<Vec<Str
     let (path, _kind) = query(state.inner().clone(), move |conn| repos::locate(conn, id)).await?;
     tauri::async_runtime::spawn_blocking(move || scopes_from_history(&path))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// commit-msg hook 的当前状态（需求 7.20）。纯读，进页面就能调。
@@ -64,7 +64,7 @@ pub async fn hook_status(state: State<'_, Arc<Db>>, id: i64) -> Result<HookStatu
     let path = worktree_path(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || hook::status(&path, &spec))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 一键安装 / 强制覆盖（`force` 仅对默认 .git/hooks 下别人写的 commit-msg 有意义，
@@ -80,7 +80,7 @@ pub async fn hook_install(
     let force = force.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || hook::install(&path, &spec, force))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 卸载。只删本工具生成的那一份，别人的 hook 不动。
@@ -90,7 +90,7 @@ pub async fn hook_uninstall(state: State<'_, Arc<Db>>, id: i64) -> Result<HookIn
     let path = worktree_path(state.inner(), id).await?;
     tauri::async_runtime::spawn_blocking(move || hook::uninstall(&path, &spec))
         .await
-        .map_err(|err| GitError::Internal(err.to_string()))?
+        .map_err(GitError::internal)?
 }
 
 /// 将要写入磁盘的那份脚本原文（需求 7.20：规则以字面量快照进脚本，且不依赖本工具）。
