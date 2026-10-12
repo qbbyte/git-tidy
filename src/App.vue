@@ -1,20 +1,25 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onErrorCaptured, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   NAlert,
   NButton,
   NConfigProvider,
+  NDropdown,
   NDialogProvider,
   NMessageProvider,
   NProgress,
   NSpace,
   NIcon,
+  darkTheme as naiveDarkTheme,
   dateZhCN,
   zhCN,
   type GlobalThemeOverrides,
 } from "naive-ui";
 import RepoSidebar from "@/components/RepoSidebar.vue";
+import { createDiscreteApi } from "naive-ui";
+
+const { dialog } = createDiscreteApi(["dialog"]);
 import SyncActions from "@/components/SyncActions.vue";
 import SettingsModal from "@/components/SettingsModal.vue";
 import AddRepoModal from "@/components/AddRepoModal.vue";
@@ -24,6 +29,9 @@ import { useWriteStore } from "@/stores/write";
 import { usePrefsStore as usePrefs } from "@/stores/prefs";
 import { INTERRUPT_LABEL, type Interrupt } from "@/api/refs";
 import { FONT_UI, RADIUS_CONTROL, tokens } from "@/styles/tokens";
+import { useTheme, THEME_LABELS } from "@/composables/useTheme";
+import type { ThemeMode } from "@/api/prefs";
+import type { DropdownOption } from "naive-ui";
 import {
   SHORTCUTS,
   TAB_SHORTCUTS,
@@ -34,6 +42,7 @@ import {
 import { runShell } from "@/shell";
 import { checkForUpdate, updateCheckOnStartup, type CheckResult } from "@/api/update";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // 导航图标
 import HistoryIcon from "@vicons/tabler/es/History";
@@ -43,6 +52,13 @@ import ReportIcon from "@vicons/tabler/es/DeviceAnalytics";
 import ChangelogIcon from "@vicons/tabler/es/ClipboardList";
 import GitBranchIcon from "@vicons/tabler/es/GitBranch";
 import BranchNavIcon from "@vicons/tabler/es/GitBranch";
+import SunIcon from "@vicons/tabler/es/Sun";
+import MoonIcon from "@vicons/tabler/es/Moon";
+import DesktopIcon from "@vicons/tabler/es/DeviceDesktop";
+import MinusIcon from "@vicons/tabler/es/Minus";
+import MaxIcon from "@vicons/tabler/es/ArrowsDiagonal";
+import RestoreIcon from "@vicons/tabler/es/ArrowsDiagonal2";
+import CloseWinIcon from "@vicons/tabler/es/X";
 const route = useRoute();
 const router = useRouter();
 const repos = useReposStore();
@@ -50,6 +66,75 @@ const writes = useWriteStore();
 const settingsVisible = ref(false);
 const addRepoVisible = ref(false);
 const newBranchVisible = ref(false);
+
+/** 自绘标题栏的窗口控制 */
+const appWindow = getCurrentWindow();
+const isMaximized = ref(false);
+
+async function syncMaxState() {
+  try { isMaximized.value = await appWindow.isMaximized(); } catch { /* 非 Tauri 环境 */ }
+}
+
+function winMinimize() { void appWindow.minimize(); }
+function winToggleMax() { void appWindow.toggleMaximize(); void syncMaxState(); }
+function winClose() { void appWindow.close(); }
+
+/** 点击品牌标题：关闭当前仓库，回到空白首页 */
+function onBrandClick() {
+  if (!repos.current) return;
+  dialog.warning({
+    title: "关闭当前仓库？",
+    content: "关闭后中间区域将不再显示内容，仓库记录仍保留在侧栏列表中。",
+    positiveText: "关闭仓库",
+    negativeText: "算了",
+    onPositiveClick: () => {
+      repos.closeCurrent();
+      router.push({ name: "history" });
+    },
+  });
+}
+
+/** 主题模式：跟随 prefs 持久化，传给 useTheme 做解析 */
+const themeMode = ref<ThemeMode>("system");
+const { isDark, init: initTheme } = useTheme(themeMode);
+
+/** 主题切换菜单选项 */
+const themeOptions: DropdownOption[] = [
+  { label: THEME_LABELS.system, key: "system" },
+  { label: THEME_LABELS.light, key: "light" },
+  { label: THEME_LABELS.dark, key: "dark" },
+];
+
+function onThemeSelect(key: string) {
+  themeMode.value = key as ThemeMode;
+  const prefs = usePrefs();
+  void prefs.patch(() => ({ theme: key as ThemeMode }));
+}
+
+const themeLabel = computed(() => {
+  const labels: Record<ThemeMode, string> = THEME_LABELS;
+  return labels[themeMode.value];
+});
+
+const themeOverrides = computed<GlobalThemeOverrides>(() => {
+  const base: GlobalThemeOverrides = {
+    common: {
+      primaryColor: tokens.accent,
+      primaryColorHover: tokens.accentHover,
+      primaryColorPressed: tokens.accentPressed,
+      fontFamily: FONT_UI,
+      borderRadius: RADIUS_CONTROL,
+    },
+  };
+  if (isDark.value) {
+    base.common!.primaryColor = "#3b8eff";
+    base.common!.primaryColorHover = "#5ba2ff";
+    base.common!.primaryColorPressed = "#2a7adf";
+  }
+  return base;
+});
+
+const activeTheme = computed(() => (isDark.value ? naiveDarkTheme : null));
 
 watch(
   () => repos.canCommit,
@@ -63,16 +148,6 @@ const INTERRUPT_EXIT: Record<Interrupt, string> = {
   rebase: "解决冲突后用 git rebase --continue 继续，或 git rebase --abort 回到变基之前",
   cherry_pick: "解决冲突后用 git cherry-pick --continue 继续，或 --abort 放弃这次摘取",
   revert: "解决冲突后用 git revert --continue 继续，或 --abort 放弃这次回滚",
-};
-
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    primaryColor: tokens.accent,
-    primaryColorHover: tokens.accentHover,
-    primaryColorPressed: tokens.accentPressed,
-    fontFamily: FONT_UI,
-    borderRadius: RADIUS_CONTROL,
-  },
 };
 
 const activeTab = computed(() => {
@@ -159,10 +234,21 @@ function closeError() { repos.error = null; }
 
 onMounted(() => {
   window.addEventListener("keydown", onKeyDown);
+  void syncMaxState();
+  // 窗口最大化/还原时同步按钮图标
+  appWindow.onResized(() => void syncMaxState());
   usePrefs().load();
   void repos.load();
   void startupUpdateCheck();
+  initTheme();
 });
+
+// prefs 异步加载完成后，把存储的 theme 同步到 themeMode
+const prefsStore = usePrefs();
+watch(
+  () => prefsStore.prefs?.theme,
+  (stored) => { if (stored) themeMode.value = stored; },
+);
 onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 
 // 远程命令与改写的逐行进度：必须在命令发出之前挂上监听，
@@ -175,25 +261,42 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeyDown);
   cancelProgress?.();
 });
+
+// 全局错误边界：捕获组件树里未被 try/catch 接住的异常，渲染兜底 UI 而非白屏。
+// 已经被各 store 的 wrapError() 处理的错误不会走到这里——只有 Vue 渲染、
+// 生命周期钩子或未经包裹的同步异常才会触发。
+const fatalError = ref<string | null>(null);
+onErrorCaptured((err: unknown, _instance: ComponentPublicInstance | null, info: string) => {
+  console.error("[Git Tidy] 渲染异常：", err, info);
+  fatalError.value = err instanceof Error ? err.message : String(err);
+  return false;
+});
 </script>
 
 <template>
-  <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme-overrides="themeOverrides">
+  <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme-overrides="themeOverrides" :theme="activeTheme">
     <n-dialog-provider>
       <n-message-provider>
-        <div class="app">
+        <!-- 全局错误兜底：errorCaptured 捕获异常后替换整个内容区 -->
+        <div v-if="fatalError" class="fatal-error" role="alert" aria-live="assertive">
+          <p class="fatal-error__title">页面渲染遇到意外错误</p>
+          <p class="fatal-error__msg">{{ fatalError }}</p>
+          <n-button size="small" @click="fatalError = null">重试</n-button>
+        </div>
+        <div class="app" v-else>
           <!-- 全宽顶栏：品牌 + 导航页签 + 仓库上下文 + 引用按钮 -->
-          <header class="toolbar">
+          <header class="toolbar" data-tauri-drag-region>
             <!-- 品牌 -->
             <div class="brand">
-              <span class="brand-name">Git Tidy</span>
+              <span class="brand-name" title="点击关闭当前仓库" @click="onBrandClick">Git Tidy</span>
             </div>
 
             <!-- 导航页签（带图标） -->
-            <nav class="nav">
+            <nav class="nav" aria-label="主导航">
               <button
                 class="nav-item"
                 :class="{ active: activeTab === 'history' }"
+                :aria-current="activeTab === 'history' ? 'page' : undefined"
                 @click="go('history')"
               >
                 <n-icon :component="HistoryIcon" size="16" />
@@ -202,6 +305,7 @@ onBeforeUnmount(() => {
               <button
                 class="nav-item"
                 :class="{ active: activeTab === 'files' }"
+                :aria-current="activeTab === 'files' ? 'page' : undefined"
                 @click="go('files')"
               >
                 <n-icon :component="FileIcon" size="16" />
@@ -211,6 +315,7 @@ onBeforeUnmount(() => {
                 class="nav-item"
                 :class="{ active: activeTab === 'commit', disabled: !commitTabEnabled }"
                 :disabled="!commitTabEnabled"
+                :aria-current="activeTab === 'commit' ? 'page' : undefined"
                 @click="go('commit')"
               >
                 <n-icon :component="GitCommitIcon" size="16" />
@@ -219,6 +324,7 @@ onBeforeUnmount(() => {
               <button
                 class="nav-item"
                 :class="{ active: activeTab === 'report' }"
+                :aria-current="activeTab === 'report' ? 'page' : undefined"
                 @click="go('report')"
               >
                 <n-icon :component="ReportIcon" size="16" />
@@ -227,6 +333,7 @@ onBeforeUnmount(() => {
               <button
                 class="nav-item"
                 :class="{ active: activeTab === 'changelog' }"
+                :aria-current="activeTab === 'changelog' ? 'page' : undefined"
                 @click="go('changelog')"
               >
                 <n-icon :component="ChangelogIcon" size="16" />
@@ -235,6 +342,7 @@ onBeforeUnmount(() => {
               <button
                 class="nav-item"
                 :class="{ active: activeTab === 'branches' }"
+                :aria-current="activeTab === 'branches' ? 'page' : undefined"
                 @click="go('branches')"
               >
                 <n-icon :component="BranchNavIcon" size="16" />
@@ -252,7 +360,25 @@ onBeforeUnmount(() => {
             <div v-else class="context empty">还没有打开仓库</div>
 
             <!-- 右侧动作 -->
+            <n-dropdown :options="themeOptions" trigger="click" @select="onThemeSelect">
+              <button class="theme-btn" :title="'主题：' + themeLabel" aria-label="切换主题">
+                <n-icon :component="themeMode === 'system' ? DesktopIcon : themeMode === 'light' ? SunIcon : MoonIcon" size="16" />
+              </button>
+            </n-dropdown>
             <SyncActions />
+
+            <!-- 自绘窗口控制按钮 -->
+            <div class="win-controls">
+              <button class="win-btn" title="最小化" aria-label="最小化" @click="winMinimize">
+                <n-icon :component="MinusIcon" size="14" />
+              </button>
+              <button class="win-btn" :title="isMaximized ? '还原' : '最大化'" :aria-label="isMaximized ? '还原' : '最大化'" @click="winToggleMax">
+                <n-icon :component="isMaximized ? RestoreIcon : MaxIcon" size="13" />
+              </button>
+              <button class="win-btn win-close" title="关闭" aria-label="关闭" @click="winClose">
+                <n-icon :component="CloseWinIcon" size="14" />
+              </button>
+            </div>
           </header>
 
           <!-- 下方：侧栏 + 主区 -->
@@ -325,6 +451,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  background: var(--surface-app);
+  color: var(--text-1);
 }
 
 /* ---- 全宽顶栏 ---- */
@@ -346,6 +474,65 @@ onBeforeUnmount(() => {
   align-items: center;
   flex: none;
   gap: 6px;
+}
+.theme-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+.theme-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-1);
+}
+
+/* 自绘窗口控制按钮：Windows 风格的平铺按钮 */
+.win-controls {
+  display: flex;
+  align-items: center;
+  flex: none;
+  margin-left: 4px;
+}
+
+.win-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.win-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-1);
+}
+
+.win-btn:active {
+  background: var(--surface-sunken);
+}
+
+/* 关闭按钮 hover 变红：Windows 的通行做法 */
+.win-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.win-close:active {
+  background: #c50f1f;
+  color: #fff;
 }
 .brand-name {
   font-size: 14px;
@@ -494,4 +681,13 @@ onBeforeUnmount(() => {
 
 .muted { font-size: 11px; opacity: 0.7; }
 .raw-output { margin: 8px 0 0; white-space: pre-wrap; font-size: 12px; opacity: 0.8; }
+
+.fatal-error {
+  max-width: 480px;
+  margin: 80px auto;
+  padding: 24px;
+  text-align: center;
+}
+.fatal-error__title { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+.fatal-error__msg { font-size: 13px; opacity: 0.7; margin: 0 0 16px; word-break: break-word; }
 </style>

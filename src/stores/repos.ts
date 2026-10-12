@@ -235,6 +235,12 @@ export const useReposStore = defineStore("repos", () => {
     await load();
   }
 
+  /** 取消选中当前仓库，回到无仓库的空白首页 */
+  function closeCurrent() {
+    currentId.value = null;
+    clearOpened();
+  }
+
   /** 只移除记录，磁盘上的仓库文件不动（§6.1） */
   async function remove(id: number) {
     const done = await run(() => removeRepo(id).then(() => true));
@@ -275,6 +281,7 @@ export const useReposStore = defineStore("repos", () => {
     stage,
     unstage,
     rename,
+    closeCurrent,
     remove,
   };
 });

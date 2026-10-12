@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "git-tidy",
+        "decorations": false,
         "width": 1280,
         "height": 820,
         "minWidth": 960,
@@ -20,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost https: http:; font-src 'self' data:"
     }
   },
   "bundle": {
