@@ -655,12 +655,20 @@ onBeforeUnmount(() => {
   background: var(--border);
   border-radius: 2px;
   transition: background 120ms ease;
+  position: relative;
+  touch-action: none;
 }
 
 .hdr-resize:hover {
   background: var(--accent);
 }
 
+/* 拖拽时增加热区，防止 3px 太窄点不到 */
+.hdr-resize::before {
+  content: "";
+  position: absolute;
+  inset: -5px -6px;
+}
 .col-subject {
   display: flex;
   align-items: center;

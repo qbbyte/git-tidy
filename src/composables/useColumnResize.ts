@@ -47,8 +47,11 @@ export function useColumnResize(group: string, specs: ColumnSpec[]) {
       if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
+      const target = event.currentTarget as HTMLElement;
       const startX = event.clientX;
       const startWidth = widths[key] ?? 0;
+      // pointer capture 确保后续 move/up 都送到这个元素，不会被别的元素抢走
+      target.setPointerCapture(event.pointerId);
       let moved = false;
       const prev = document.body.style.userSelect;
       document.body.style.userSelect = "none";
@@ -60,14 +63,15 @@ export function useColumnResize(group: string, specs: ColumnSpec[]) {
       };
       const onUp = () => {
         document.body.style.userSelect = prev;
+        target.releasePointerCapture(event.pointerId);
         if (moved) persist(`${group}:${key}`, widths[key]);
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        window.removeEventListener("blur", onUp);
+        target.removeEventListener("pointermove", onMove);
+        target.removeEventListener("pointerup", onUp);
+        target.removeEventListener("lostpointercapture", onUp);
       };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-      window.addEventListener("blur", onUp);
+      target.addEventListener("pointermove", onMove);
+      target.addEventListener("pointerup", onUp);
+      target.addEventListener("lostpointercapture", onUp);
     };
   }
 
