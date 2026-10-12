@@ -164,6 +164,17 @@ onMounted(() => {
   void startupUpdateCheck();
 });
 onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
+
+// 远程命令与改写的逐行进度：必须在命令发出之前挂上监听，
+// 否则 fetch 的头几行进度可能在 promise 落地前就到了却无人接收
+let cancelProgress: (() => void) | undefined;
+onMounted(async () => {
+  cancelProgress = await writes.watchProgress();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeyDown);
+  cancelProgress?.();
+});
 </script>
 
 <template>
