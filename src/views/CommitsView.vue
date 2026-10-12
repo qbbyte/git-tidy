@@ -78,7 +78,6 @@ function pick(sha: string) {
 /** 提交列表的列定义——主体列 flex 占满，其余列可拖拽调宽 */
 const columns = useColumnResize("history", [
   { key: "subject", defaultWidth: 0, minWidth: 0, flex: true },
-  { key: "refs", defaultWidth: 160, minWidth: 60 },
   { key: "sha", defaultWidth: 80, minWidth: 50 },
   { key: "author", defaultWidth: 100, minWidth: 50 },
   { key: "time", defaultWidth: 120, minWidth: 60 },
@@ -291,6 +290,14 @@ watch(repoId, (id) => {
   void loadTypes();
 });
 
+// 切换分支后 repoId 不变，但 HEAD 指向的提交变了，历史列表必须重拉
+watch(
+  () => repos.repoState?.branch,
+  () => {
+    if (repoId.value !== null) void commitStore.open(repoId.value);
+  },
+);
+
 onMounted(() => window.addEventListener("keydown", onKeyDown));
 onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 
@@ -378,22 +385,41 @@ onBeforeUnmount(() => {
 
               <!-- 列标题行：标题文字 + 列宽拖拽手柄 -->
               <div class="col-header" :style="{ gridTemplateColumns: gridCols }">
-                <span class="hdr-subject">描述</span>
-                <span class="hdr-refs">
-                  引用
-                  <i class="hdr-resize" @pointerdown="columns.makeHandle('refs')" @dblclick="columns.resetColumn('refs')" />
+                <span class="hdr-subject">
+                  描述
+                  <i
+                    class="hdr-resize"
+                    title="拖动调整 SHA 列宽度"
+                    @pointerdown="columns.startResize($event, 'sha', -1)"
+                    @dblclick="columns.resetColumn('sha')"
+                  />
                 </span>
                 <span class="hdr-sha">
                   SHA
-                  <i class="hdr-resize" @pointerdown="columns.makeHandle('sha')" @dblclick="columns.resetColumn('sha')" />
+                  <i
+                    class="hdr-resize"
+                    title="拖动调整 SHA 列宽度"
+                    @pointerdown="columns.startResize($event, 'sha')"
+                    @dblclick="columns.resetColumn('sha')"
+                  />
                 </span>
                 <span class="hdr-author">
                   作者
-                  <i class="hdr-resize" @pointerdown="columns.makeHandle('author')" @dblclick="columns.resetColumn('author')" />
+                  <i
+                    class="hdr-resize"
+                    title="拖动调整作者列宽度"
+                    @pointerdown="columns.startResize($event, 'author')"
+                    @dblclick="columns.resetColumn('author')"
+                  />
                 </span>
                 <span class="hdr-time">
                   时间
-                  <i class="hdr-resize" @pointerdown="columns.makeHandle('time')" @dblclick="columns.resetColumn('time')" />
+                  <i
+                    class="hdr-resize"
+                    title="拖动调整时间列宽度"
+                    @pointerdown="columns.startResize($event, 'time')"
+                    @dblclick="columns.resetColumn('time')"
+                  />
                 </span>
               </div>
 
@@ -414,10 +440,7 @@ onBeforeUnmount(() => {
                   <n-tag v-if="commit.scope" size="small" :bordered="false">{{ commit.scope }}</n-tag>
                   <n-tag v-if="commit.breaking" type="error" size="small" :bordered="false">!</n-tag>
                   <n-tag v-if="commit.merge" type="warning" size="small" :bordered="false">merge</n-tag>
-                  <span class="subject" :title="commit.subject">{{ commit.subject }}</span>
-                </div>
-                <!-- 引用列 -->
-                <div v-if="prefs.refs" class="col-refs">
+                  <template v-if="prefs.refs">
                   <span v-if="commit.head && !commit.refs.some((b) => b.head)" class="badge current">HEAD</span>
                   <span
                     v-for="badge in commit.refs.slice(0, 4)"
@@ -426,8 +449,9 @@ onBeforeUnmount(() => {
                     :class="[badge.kind, { head: badge.head }]"
                   >{{ badge.name }}</span>
                   <span v-if="commit.refs.length > 4" class="badge more">+{{ commit.refs.length - 4 }}</span>
+                  </template>
+                  <span class="subject" :title="commit.subject">{{ commit.subject }}</span>
                 </div>
-                <div v-else class="col-refs" />
                 <!-- SHA 列 -->
                 <code v-if="prefs.sha" class="col-sha">{{ commit.id.slice(0, 8) }}</code>
                 <div v-else class="col-sha" />
@@ -639,35 +663,56 @@ onBeforeUnmount(() => {
 }
 
 .col-header > span {
+  position: relative;
   display: flex;
   align-items: center;
+  height: 100%;
   gap: 4px;
-  overflow: hidden;
+  min-width: 0;
+  padding-right: 10px;
   white-space: nowrap;
 }
 
+.col-header > span + span {
+  padding-left: 8px;
+}
+
 .hdr-resize {
-  flex: none;
-  width: 3px;
-  height: 16px;
-  margin-left: auto;
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 5;
+  width: 11px;
+  height: 100%;
+  transform: translateX(50%);
   cursor: col-resize;
-  background: var(--border);
-  border-radius: 2px;
-  transition: background 120ms ease;
-  position: relative;
+  background: transparent;
   touch-action: none;
 }
 
-.hdr-resize:hover {
+/* 分割缝默认是 1px 浅灰；11px 透明区域负责承接鼠标，视觉和命中区分开 */
+.hdr-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--border);
+  transition: width 120ms ease, background 120ms ease;
+}
+
+.hdr-resize:hover::after,
+.hdr-resize:active::after {
+  width: 2px;
   background: var(--accent);
 }
 
-/* 拖拽时增加热区，防止 3px 太窄点不到 */
 .hdr-resize::before {
   content: "";
   position: absolute;
-  inset: -5px -6px;
+  inset: 0 -2px;
 }
 .col-subject {
   display: flex;
@@ -693,14 +738,6 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   font-size: 13px;
   color: var(--text-1);
-}
-
-.col-refs {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  overflow: hidden;
-  min-width: 0;
 }
 
 .badge {
