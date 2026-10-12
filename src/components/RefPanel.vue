@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { shortSha } from "@/format";
 import { computed, ref } from "vue";
 import {
   NAlert,
@@ -8,6 +9,7 @@ import {
   NPopconfirm,
   NSelect,
   NSpace,
+  useMessage,
 } from "naive-ui";
 import { useReposStore } from "@/stores/repos";
 import { useWriteStore } from "@/stores/write";
@@ -32,8 +34,9 @@ import type { Ref } from "@/api/refs";
  */
 const repos = useReposStore();
 const writes = useWriteStore();
+const message = useMessage();
 
-/** 「新建分支」往上抛：面板不开弹窗，由宿主（RefsModal → App）去开 */
+/** 「新建分支」往上抛：面板不开弹窗，由宿主（BranchesView → App）去开 */
 const emit = defineEmits<{ (e: "new-branch"): void }>();
 
 const branches = computed(() => repos.refs.filter((item) => item.kind === "branch"));
@@ -82,15 +85,17 @@ function canWrite() {
   return writes.canWrite && !writes.busy;
 }
 
-/** 切换前先看一眼工作区：脏的时候切换会被 Rust 侧拒，不如自己先说清 */
+/** 切换前先看一眼工作区：git 遇到与目标分支冲突的改动才会拒绝，不冲突的会带过去 */
 const dirtyHint = computed(() =>
   repos.workingFiles.length === 0
     ? ""
-    : `工作区还有 ${repos.workingFiles.length} 处改动，切换分支会被拒绝（先提交或存起来）`,
+    : `工作区还有 ${repos.workingFiles.length} 处改动；若与目标分支冲突将被拒绝，建议先提交或 stash`,
 );
 
 async function switchTo(name: string) {
-  await writes.switchBranch(name, false);
+  const outcome = await writes.switchBranch(name, false);
+  if (outcome) message.success(`已切换到分支 ${name}`);
+  else if (writes.error) message.error(writes.error.message);
 }
 
 async function startRename(item: Ref) {
@@ -163,9 +168,6 @@ async function deleteRemote(name: string) {
   await writes.deleteRemoteBranch(remoteName.value, target);
 }
 
-function shortSha(sha: string) {
-  return sha.slice(0, 8);
-}
 </script>
 
 <template>

@@ -2,7 +2,7 @@
 /**
  * 分支管理页（表格风格）。
  *
- * 从原弹窗 RefsModal 迁移为独立路由页面，不再遮挡其他内容，
+ * 独立路由页面，不遮挡其他内容，
  * 表格有更多空间展示分支详情。
  */
 import { computed, ref, watch, onMounted } from "vue";
@@ -16,6 +16,7 @@ import {
   NTabPane,
   NTabs,
   useDialog,
+  useMessage,
 } from "naive-ui";
 import RefreshIcon from "@vicons/tabler/es/Refresh";
 import TrashIcon from "@vicons/tabler/es/Trash";
@@ -28,6 +29,7 @@ import { useWriteStore } from "@/stores/write";
 const repos = useReposStore();
 const writes = useWriteStore();
 const dialog = useDialog();
+const message = useMessage();
 
 interface BranchDetail {
   name: string;
@@ -80,6 +82,9 @@ async function fetchBranchDetails() {
 
 onMounted(() => void fetchBranchDetails());
 watch(() => repos.currentId, () => void fetchBranchDetails());
+
+// 切换分支后 currentId 不变，但分支列表的 HEAD/活跃状态会变
+watch(() => repos.repoState?.branch, () => void fetchBranchDetails());
 
 const activeTab = ref("all");
 const searchQuery = ref("");
@@ -177,15 +182,23 @@ const currentBranch = computed(() => repos.repoState?.branch ?? null);
 /** 双击分支行切换到该分支（与侧栏树的双击语义一致） */
 async function switchToBranch(name: string) {
   if (name === currentBranch.value) return;
-  if (repos.workingFiles.length > 0) {
+  const dirty = repos.workingFiles.length;
+  const doSwitch = async () => {
+    const outcome = await writes.switchBranch(name, false);
+    if (outcome) message.success(`已切换到分支 ${name}`);
+    else if (writes.error) message.error(writes.error.message);
+  };
+  if (dirty > 0) {
     dialog.warning({
       title: "工作区有改动",
-      content: `工作区还有 ${repos.workingFiles.length} 处改动，切换分支会被拒绝。`,
-      positiveText: "知道了",
+      content: `工作区还有 ${dirty} 处改动。若与目标分支冲突将被拒绝，不冲突的改动会带到目标分支上。仍要切换吗？`,
+      positiveText: "切换",
+      negativeText: "算了",
+      onPositiveClick: () => void doSwitch(),
     });
     return;
   }
-  await writes.switchBranch(name, false);
+  await doSwitch();
 }
 </script>
 
