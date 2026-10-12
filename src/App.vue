@@ -439,6 +439,22 @@ onBeforeUnmount(() => {
   font-style: italic;
 }
 
+/* ---- 窄窗口自适应 ---- */
+
+/* 中等窗口：藏掉导航文字，只留图标，腾出空间给仓库上下文 */
+@media (max-width: 960px) {
+  .nav-item span {
+    display: none;
+  }
+}
+
+/* 更窄：仓库上下文里的"待提交"计数也藏掉，把空间留给仓库名 */
+@media (max-width: 760px) {
+  .context .changes {
+    display: none;
+  }
+}
+
 /* 下方布局 */
 .body {
   flex: 1;

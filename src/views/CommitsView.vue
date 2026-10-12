@@ -522,6 +522,16 @@ onBeforeUnmount(() => {
   table-layout: fixed;
 }
 
+/* 窄容器下保证列不被压扁：设一个下限宽度，超出部分横向滚动 */
+@media (max-width: 700px) {
+  .commit-table {
+    min-width: 600px;
+  }
+  .commit-scroll :deep(.n-scrollbar-container) {
+    overflow-x: auto;
+  }
+}
+
 .commit-table :deep(thead th) {
   font-size: 11px;
   font-weight: 600;

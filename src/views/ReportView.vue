@@ -648,6 +648,13 @@ watch(view, refreshCurrent);
   gap: 10px;
 }
 
+/* 窄容器：头部允许换行 */
+@media (max-width: 700px) {
+  .head {
+    flex-wrap: wrap;
+  }
+}
+
 /* 页签贴着区间选择器：区间是共用的，两个视角都吃它，不该看上去像各管各的 */
 .views {
   margin-top: -6px;
@@ -665,6 +672,14 @@ watch(view, refreshCurrent);
   display: flex;
   gap: 28px;
   margin-bottom: 8px;
+}
+
+/* 窄容器：汇总数字允许换行 */
+@media (max-width: 600px) {
+  .totals {
+    flex-wrap: wrap;
+    gap: 16px 20px;
+  }
 }
 
 .total {
@@ -822,6 +837,20 @@ watch(view, refreshCurrent);
   display: grid;
   grid-template-columns: 280px 1fr;
   gap: 24px;
+}
+
+/* 窄容器：仪表盘两栏改为上下堆叠 */
+@media (max-width: 760px) {
+  .dashboard {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .dashboard-reasons {
+    padding-left: 0;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
 }
 
 .dashboard-score {

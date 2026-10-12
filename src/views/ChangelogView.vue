@@ -283,6 +283,13 @@ watch(repoId, load);
   gap: 10px;
 }
 
+/* 窄容器：头部允许换行，避免按钮被挤出屏幕 */
+@media (max-width: 700px) {
+  .head {
+    flex-wrap: wrap;
+  }
+}
+
 .head-line {
   justify-content: space-between;
   margin-bottom: 8px;
